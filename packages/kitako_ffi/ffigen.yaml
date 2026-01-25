@@ -1,0 +1,19 @@
+# Run with `dart run ffigen --config ffigen.yaml`.
+name: KitakoFfiBindings
+description: |
+  Bindings for `src/kitako_ffi.h`.
+
+  Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
+output: 'lib/kitako_ffi_bindings_generated.dart'
+headers:
+  entry-points:
+    - 'src/kitako_ffi.h'
+  include-directives:
+    - 'src/kitako_ffi.h'
+preamble: |
+  // ignore_for_file: always_specify_types
+  // ignore_for_file: camel_case_types
+  // ignore_for_file: non_constant_identifier_names
+comments:
+  style: any
+  length: full
