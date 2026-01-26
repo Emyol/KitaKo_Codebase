@@ -1,30 +1,26 @@
+#ifndef KITAKO_FFI_H
+#define KITAKO_FFI_H
+
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 
-#if _WIN32
-#include <windows.h>
-#else
-#include <pthread.h>
-#include <unistd.h>
-#endif
-
-#if _WIN32
+#if defined(_WIN32)
 #define FFI_PLUGIN_EXPORT __declspec(dllexport)
 #else
-#define FFI_PLUGIN_EXPORT
+#define FFI_PLUGIN_EXPORT __attribute__((visibility("default"))) __attribute__((used))
 #endif
 
-// A very short-lived native function.
-//
-// For very short-lived functions, it is fine to call them on the main isolate.
-// They will block the Dart execution while running the native function, so
-// only do this for native functions which are guaranteed to be short-lived.
-FFI_PLUGIN_EXPORT int sum(int a, int b);
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// A longer lived native function, which occupies the thread calling it.
-//
-// Do not call these kind of native functions in the main isolate. They will
-// block Dart execution. This will cause dropped frames in Flutter applications.
-// Instead, call these native functions on a separate isolate.
-FFI_PLUGIN_EXPORT int sum_long_running(int a, int b);
+/**
+ * Fills out[0..out_len-1] with deterministic dummy embedding values.
+ * Used for testing FFI bridge connectivity.
+ */
+FFI_PLUGIN_EXPORT void kitako_dummy_embed(float* out, int32_t out_len);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // KITAKO_FFI_H

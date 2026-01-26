@@ -1,5 +1,5 @@
 name: kitako_ann
-description: "A new Flutter package project."
+description: "HNSW-based Approximate Nearest Neighbor search for KitaKo multimodal image retrieval."
 version: 0.0.1
 homepage:
 
@@ -10,6 +10,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  kitako_ffi:
+    path: ../kitako_ffi
+  path_provider: ^2.1.0
 
 dev_dependencies:
   flutter_test:
