@@ -2,6 +2,7 @@
 // Or: flutter test manual_test.dart
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kitako_ann/kitako_ann.dart';
@@ -27,7 +28,7 @@ void main() {
         norm += vec[j] * vec[j];
       }
       // L2 normalize
-      norm = norm > 0 ? 1.0 / (norm * 0.5 + 0.5) : 1.0;
+      norm = norm > 0 ? 1.0 / math.sqrt(norm) : 1.0;
       for (int j = 0; j < 768; j++) {
         vec[j] *= norm;
       }

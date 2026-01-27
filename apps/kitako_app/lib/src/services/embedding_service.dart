@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:kitako_normalizer/kitako_normalizer.dart';
 
 /// Service for generating text embeddings
 ///
 /// This service wraps the kitako_embedding package and provides:
-/// - Text normalization
+/// - Text normalization (Taglish support)
 /// - Embedding generation
 /// - Batch processing
 /// - Caching
@@ -19,6 +20,9 @@ class EmbeddingService {
   /// Whether the service has been initialized
   bool _isInitialized = false;
 
+  /// Taglish normalizer for preprocessing queries
+  final TaglishNormalizer _normalizer = const TaglishNormalizer();
+
   /// Cache of recently generated embeddings
   final Map<String, List<double>> _embeddingCache = {};
 
@@ -26,8 +30,7 @@ class EmbeddingService {
   static const int _maxCacheSize = 100;
 
   /// Embedding dimension (depends on model)
-  static const int embeddingDimension =
-      384; // Common dimension for sentence transformers
+  static const int embeddingDimension = 768; // SigLIP dimension
 
   /// Initialize the embedding service
   ///
@@ -122,14 +125,17 @@ class EmbeddingService {
     return embeddings;
   }
 
-  /// Normalize a text query
+  /// Normalize a text query using TaglishNormalizer
   ///
-  /// Applies text preprocessing:
-  /// - Lowercase conversion
-  /// - Whitespace trimming
-  /// - Special character handling
+  /// Applies comprehensive text preprocessing:
+  /// - Tagalog/Taglish abbreviation expansion
+  /// - Code-switching handling (nag- + English verb)
+  /// - Reduplication preservation
+  /// - Punctuation and whitespace normalization
   String _normalizeQuery(String query) {
-    return query.trim().toLowerCase();
+    final normalized = _normalizer.normalize(query);
+    debugPrint('EmbeddingService: Normalized "$query" → "$normalized"');
+    return normalized;
   }
 
   /// Cache an embedding result

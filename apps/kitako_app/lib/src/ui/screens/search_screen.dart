@@ -206,6 +206,20 @@ class _SearchScreenState extends State<SearchScreen> {
                 fontSize: 16,
               ),
             ),
+            // Show normalized query if different from original
+            if (_currentSearchState.normalizedQuery != null &&
+                _currentSearchState.normalizedQuery != _currentSearchState.query)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Normalized: "${_currentSearchState.normalizedQuery}"',
+                  style: TextStyle(
+                    color: const Color(0xFF4A90E2).withOpacity(0.8),
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
           ],
         ),
       );
@@ -271,29 +285,74 @@ class _SearchScreenState extends State<SearchScreen> {
 
     if (_currentSearchState.status == SearchStatus.success) {
       final results = _currentSearchState.result?.images ?? [];
+      final hasNormalization = _currentSearchState.normalizedQuery != null &&
+          _currentSearchState.normalizedQuery != _currentSearchState.query;
+      
       return Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(16.0),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Text(
-                    _currentSearchState.query,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _currentSearchState.query,
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.tune,
+                      color: isDark
+                          ? const Color(0xFF666666)
+                          : const Color(0xFF999999),
+                      size: 24,
+                    ),
+                  ],
+                ),
+                // Show normalized query chip if different from original
+                if (hasNormalization)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF4A90E2).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: const Color(0xFF4A90E2).withOpacity(0.3),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.translate,
+                            size: 14,
+                            color: const Color(0xFF4A90E2),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Normalized: "${_currentSearchState.normalizedQuery}"',
+                            style: TextStyle(
+                              color: const Color(0xFF4A90E2),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                Icon(
-                  Icons.tune,
-                  color: isDark
-                      ? const Color(0xFF666666)
-                      : const Color(0xFF999999),
-                  size: 24,
-                ),
               ],
             ),
           ),
