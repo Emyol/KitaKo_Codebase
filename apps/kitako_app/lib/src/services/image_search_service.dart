@@ -304,9 +304,9 @@ class ImageSearchService {
         // 2. Run it through the embedding model
         // 3. Get the feature vector
 
-        // Mock: Generate random embedding
+        // Mock: Generate random embedding (must match query embedding dimension)
         final mockEmbedding = List.generate(
-          512, // Typical embedding dimension
+          EmbeddingService.embeddingDimension, // 768 for SigLIP
           (index) => (index * 0.01) % 1.0,
         );
         embeddings.add(mockEmbedding);

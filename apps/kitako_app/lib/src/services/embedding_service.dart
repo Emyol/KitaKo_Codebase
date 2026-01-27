@@ -25,9 +25,8 @@ class EmbeddingService {
   /// Maximum cache size
   static const int _maxCacheSize = 100;
 
-  /// Embedding dimension (depends on model)
-  static const int embeddingDimension =
-      384; // Common dimension for sentence transformers
+  /// Embedding dimension (SigLIP model)
+  static const int embeddingDimension = 768;
 
   /// Initialize the embedding service
   ///
