@@ -93,6 +93,18 @@ install(DIRECTORY "${NATIVE_ASSETS_DIR}"
    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
    COMPONENT Runtime)
 
+# Copy TFLite DLL to blobs folder for tflite_flutter package
+set(TFLITE_BLOBS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../blobs")
+if(EXISTS "${TFLITE_BLOBS_DIR}/libtensorflowlite_c-win.dll")
+  install(DIRECTORY "${TFLITE_BLOBS_DIR}/"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/blobs"
+    COMPONENT Runtime
+    FILES_MATCHING PATTERN "*.dll")
+  message(STATUS "TFLite DLL found - will be bundled")
+else()
+  message(WARNING "TFLite DLL not found at ${TFLITE_BLOBS_DIR}/libtensorflowlite_c-win.dll - embeddings will use mock mode")
+endif()
+
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.
 set(FLUTTER_ASSET_DIR_NAME "flutter_assets")
