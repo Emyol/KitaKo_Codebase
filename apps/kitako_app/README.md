@@ -72,22 +72,29 @@ flutter run
 ## Current Status
 
 ✅ **Frontend Complete** - All screens implemented  
-⏳ **Backend Pending** - Model integration upcoming  
+✅ **Backend Integrated** - Services wired to real packages  
 ✅ **Mobile Optimized** - Touch-friendly interface  
+✅ **Desktop Support** - Windows, macOS, Linux  
 ✅ **Portrait Only** - Locked orientation
 
-### Mock Features (Frontend Only)
+### Service Status
 
-- Placeholder images (gray boxes)
-- Mock search (responds to "dog", "cat", "food")
-- Non-persistent settings
+| Service | Real | Fallback | Notes |
+|---------|------|----------|-------|
+| **TaglishNormalizer** | ✅ | - | Fully implemented |
+| **EmbeddingService** | ⏳ | ✅ Mock | Needs TFLite DLL |
+| **ANNSearchService** | ⏳ | ✅ Brute-force | Needs index file |
 
-### Ready for Integration
+### Enable Real Services
 
-- Image loading from device storage
-- Embedding service (`kitako_embedding`)
-- ANN search service (`kitako_ann`)
-- Settings persistence
+**For TFLite Embeddings (Windows):**
+1. Download from [tflite-flutter-prebuilt](https://github.com/peterfritz/tflite-flutter-plugin-prebuilt/releases)
+2. Place `libtensorflowlite_c-win.dll` in `blobs/` folder
+3. Run `flutter clean && flutter run`
+
+**For HNSW Index:**
+1. Build index with `tools/build_index.dart`
+2. Copy output to `assets/index/`
 
 ---
 
@@ -95,14 +102,33 @@ flutter run
 
 ### Test Search:
 
-- Type **"dog"**, **"cat"**, or **"food"** → See results
+- Type **"dog"**, **"cat"**, or **"food"** → See results  
+- Type Taglish queries → See normalized query display
 - Type anything else → See "No results" message
+
+### Test Taglish Normalization:
+
+- Type **"nagshopping aq"** → Normalizes to "nag shopping ako"
+- Type **"gutom n aq kc d p kumain"** → Normalizes to "gutom na ako kasi di pa kumain"
 
 ### Test Navigation:
 
 - Home → Tap search → Search screen opens
 - Home → Tap settings → Settings screen opens
 - Use back button to navigate
+
+### Test on Desktop:
+
+```bash
+# Windows
+flutter run -d windows
+
+# macOS  
+flutter run -d macos
+
+# Linux
+flutter run -d linux
+```
 
 ### Test on Mobile:
 
@@ -119,24 +145,58 @@ flutter run --release
 
 ---
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Flutter UI                               │
+│                    (SearchScreen, Results)                       │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    ImageSearchService                            │
+│              (Orchestrates the search flow)                      │
+└─────────────────────────────────────────────────────────────────┘
+        │                     │                      │
+        ▼                     ▼                      ▼
+┌───────────────┐   ┌─────────────────┐   ┌─────────────────────┐
+│ TaglishNorm   │   │ EmbeddingService│   │   ANNSearchService  │
+│ (Normalizer)  │   │ (kitako_embed)  │   │   (kitako_ann)      │
+└───────────────┘   └─────────────────┘   └─────────────────────┘
+                            │                        │
+                            ▼                        ▼
+                    ┌───────────────┐        ┌─────────────┐
+                    │  TFLite Model │        │ Native HNSW │
+                    │   (SigLIP)    │        │    (FFI)    │
+                    └───────────────┘        └─────────────┘
+```
+
+---
+
 ## Project Structure
 
 ```
 apps/kitako_app/
 ├── android/              # Android native files
 ├── ios/                  # iOS native files
+├── blobs/                # Native DLLs (TFLite)
 ├── lib/
 │   ├── main.dart         # App entry point
-│   └── src/ui/
-│       ├── screens/      # All app screens
-│       │   ├── startup_screen.dart
-│       │   ├── home_screen.dart
-│       │   ├── search_screen.dart
-│       │   └── settings_screen.dart
-│       └── theme/
-│           └── app_theme.dart
-├── MOBILE_SETUP.md       # Mobile setup guide
-├── QUICK_START.md        # Quick start guide
+│   └── src/
+│       ├── models/       # Data models
+│       ├── services/     # Business logic
+│       │   ├── embedding_service.dart
+│       │   ├── ann_search_service.dart
+│       │   └── image_search_service.dart
+│       └── ui/
+│           ├── screens/  # All app screens
+│           └── theme/    # Theming
+├── assets/
+│   ├── model/            # TFLite models
+│   ├── tokenizer/        # SigLIP tokenizer
+│   └── index/            # HNSW index
+├── setup_tflite.ps1      # TFLite setup script
 └── README.md             # This file
 ```
 
@@ -146,9 +206,10 @@ apps/kitako_app/
 
 - **Framework**: Flutter 3.x
 - **Language**: Dart
+- **ML Runtime**: TensorFlow Lite
+- **ANN Search**: HNSW (hnswlib via FFI)
 - **UI**: Material Design 3
-- **Platforms**: Android, iOS
-- **Orientation**: Portrait only
+- **Platforms**: Android, iOS, Windows, macOS, Linux
 
 ---
 
@@ -158,10 +219,11 @@ apps/kitako_app/
 - Dart SDK 3.0+
 - Android Studio (for Android)
 - Xcode (for iOS, macOS only)
-- Mobile device or emulator
+- Visual Studio (for Windows)
+- CMake 3.10+ (for native builds)
 
 ---
 
-**Platform**: 📱 Mobile Only (Android & iOS)  
-**Status**: ✅ Frontend Complete  
-**Last Updated**: January 25, 2026
+**Platform**: 📱 Mobile + 🖥️ Desktop  
+**Status**: ✅ End-to-End Wired (with fallbacks)  
+**Last Updated**: January 27, 2026

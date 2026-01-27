@@ -32,14 +32,14 @@ void main() {
       try {
         // Update this path to your actual tokenizer.json location
         await tokenizer.loadFromFile(
-          'c:/Users/ricba/Documents/CS/DEVWORK/KitaKo_Codebase/assets/models/tokenizer/tokenizer.json',
+          'C:\\Users\\Jhezra\\Documents\\KitaKo_System\\apps\\kitako_app\\assets\\tokenizer\\tokenizer.json',
         );
 
         expect(tokenizer.isLoaded, true);
         expect(tokenizer.vocabSize, greaterThan(0));
 
         // Test encoding
-        final tokens = tokenizer.encode('hello world');
+        final tokens = tokenizer.encode('Fuck you Ric Ian');
         expect(tokens.length, SiglipTokenizer.maxLength); // Should be padded to 64
         expect(tokens, isA<List<int>>());
 

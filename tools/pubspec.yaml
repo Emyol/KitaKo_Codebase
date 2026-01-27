@@ -1,0 +1,15 @@
+name: kitako_tools
+description: Command-line tools for KitaKo system
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  kitako_ann:
+    path: ../packages/kitako_ann
+  kitako_embedding:
+    path: ../packages/kitako_embedding
+  kitako_normalizer:
+    path: ../packages/kitako_normalizer

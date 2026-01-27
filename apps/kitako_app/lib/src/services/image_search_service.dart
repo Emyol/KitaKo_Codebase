@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:kitako_normalizer/kitako_normalizer.dart';
 import '../models/search_models.dart';
 import 'image_loader_service.dart';
 import 'embedding_service.dart';
@@ -34,6 +35,7 @@ class ImageSearchService {
   final ImageLoaderService _imageLoader;
   final EmbeddingService _embeddingService;
   final ANNSearchService _annSearch;
+  final TaglishNormalizer _normalizer = const TaglishNormalizer();
 
   /// Create a new ImageSearchService with optional custom services
   ///
@@ -145,15 +147,23 @@ class ImageSearchService {
     final k = topK ?? this.topK;
     final thresh = threshold ?? similarityThreshold;
 
+    // Normalize the query using TaglishNormalizer
+    final normalizedQuery = _normalizer.normalize(query);
+    debugPrint('ImageSearchService: Original: "$query" → Normalized: "$normalizedQuery"');
+
     try {
-      // Update to searching state
-      _updateState(SearchState(status: SearchStatus.searching, query: query));
+      // Update to searching state with normalized query
+      _updateState(SearchState(
+        status: SearchStatus.searching,
+        query: query,
+        normalizedQuery: normalizedQuery,
+      ));
 
       debugPrint('ImageSearchService: Searching for "$query"...');
       final stopwatch = Stopwatch()..start();
 
-      // Step 1: Generate embedding for query
-      final queryEmbedding = await _embeddingService.generateEmbedding(query);
+      // Step 1: Generate embedding for NORMALIZED query
+      final queryEmbedding = await _embeddingService.generateEmbedding(normalizedQuery);
 
       // Step 2: Search for similar images
       final matchingImages = await _annSearch.searchSimilar(
@@ -173,6 +183,7 @@ class ImageSearchService {
           SearchState(
             status: SearchStatus.noResults,
             query: query,
+            normalizedQuery: normalizedQuery,
             result: SearchResult(images: [], query: query),
           ),
         );
@@ -181,6 +192,7 @@ class ImageSearchService {
           SearchState(
             status: SearchStatus.success,
             query: query,
+            normalizedQuery: normalizedQuery,
             result: SearchResult(images: matchingImages, query: query),
           ),
         );
@@ -191,6 +203,7 @@ class ImageSearchService {
         SearchState(
           status: SearchStatus.error,
           query: query,
+          normalizedQuery: normalizedQuery,
           error: e.toString(),
         ),
       );
@@ -304,7 +317,7 @@ class ImageSearchService {
         // 2. Run it through the embedding model
         // 3. Get the feature vector
 
-        // Mock: Generate random embedding (must match query embedding dimension)
+        // Mock: Generate random embedding (must match EmbeddingService dimension)
         final mockEmbedding = List.generate(
           EmbeddingService.embeddingDimension, // 768 for SigLIP
           (index) => (index * 0.01) % 1.0,

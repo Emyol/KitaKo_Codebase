@@ -1,14 +1,19 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import '../models/search_models.dart';
 
+// Conditional imports for non-web platforms
+import 'ann_search_service_stub.dart'
+    if (dart.library.io) 'ann_search_service_io.dart' as platform;
+
 /// Service for Approximate Nearest Neighbor (ANN) search
 ///
-/// This service provides:
-/// - Vector similarity search
-/// - Index management
-/// - K-nearest neighbors search
+/// This service wraps the kitako_ann package and provides:
+/// - HNSW-based vector similarity search via native FFI
+/// - Fallback to brute-force search when native isn't available
+/// - Index management and lifecycle
 ///
 /// Example usage:
 /// ```dart
@@ -17,37 +22,68 @@ import '../models/search_models.dart';
 /// final results = await annService.searchSimilar(queryEmbedding, k: 10);
 /// ```
 class ANNSearchService {
+  /// The real ANN search service from kitako_ann
+  platform.AnnClientWrapper? _annClient;
+
   /// Whether the service has been initialized
   bool _isInitialized = false;
 
-  /// Index of image embeddings
-  /// Maps image ID to its embedding vector
+  /// Whether we're using native HNSW or fallback
+  bool _usingNativeHnsw = false;
+
+  /// Fallback: Index of image embeddings (brute-force)
   final Map<String, List<double>> _imageEmbeddings = {};
 
   /// Metadata for indexed images
-  /// Maps image ID to ImageItem
   final Map<String, ImageItem> _imageMetadata = {};
+
+  /// ID to index mapping for native HNSW
+  final Map<int, String> _hnswIdToImageId = {};
+  final Map<String, int> _imageIdToHnswId = {};
+  int _nextHnswId = 0;
 
   /// Number of top results to return by default
   static const int defaultTopK = 10;
 
   /// Similarity threshold (0.0 to 1.0)
-  static const double similarityThreshold = 0.5;
+  static const double similarityThreshold = 0.3;
+
+  /// Asset paths
+  static const String _indexAsset = 'assets/index/ann_index.bin';
+
+  /// Whether native HNSW is being used
+  bool get usingNativeHnsw => _usingNativeHnsw;
 
   /// Initialize the ANN search service
   ///
-  /// Loads the search index and prepares for queries.
+  /// Attempts to load native HNSW index, falls back to brute-force if unavailable.
   ///
   /// Returns `true` if initialization was successful
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
     try {
-      // TODO: Load ANN index from kitako_ann package
-      // await annClient.loadIndex(indexPath);
+      debugPrint('ANNSearchService: Initializing...');
+
+      // Check if native ANN is supported on this platform
+      if (!platform.AnnPlatformHelper.isSupported) {
+        debugPrint('ANNSearchService: Native not supported on this platform');
+        _usingNativeHnsw = false;
+      } else {
+        // Try to load native HNSW index
+        try {
+          await _initializeNativeHnsw();
+          _usingNativeHnsw = true;
+          debugPrint('ANNSearchService: Using native HNSW index');
+        } catch (e) {
+          debugPrint('ANNSearchService: Native HNSW unavailable: $e');
+          debugPrint('ANNSearchService: Using brute-force fallback');
+          _usingNativeHnsw = false;
+        }
+      }
 
       _isInitialized = true;
-      debugPrint('ANNSearchService: Initialized successfully');
+      debugPrint('ANNSearchService: Initialized successfully (native: $_usingNativeHnsw)');
       return true;
     } catch (e) {
       debugPrint('ANNSearchService: Failed to initialize: $e');
@@ -55,13 +91,22 @@ class ANNSearchService {
     }
   }
 
+  /// Initialize native HNSW from bundled assets
+  Future<void> _initializeNativeHnsw() async {
+    // Copy index from assets to file system (native FFI needs file path)
+    final indexPath = await platform.AnnPlatformHelper.copyAssetToFile(
+      _indexAsset,
+      'ann_index.bin',
+    );
+
+    _annClient = await platform.AnnPlatformHelper.createClient(
+      indexPath: indexPath,
+    );
+
+    debugPrint('ANNSearchService: Loaded HNSW index with ${_annClient!.indexSize} items');
+  }
+
   /// Index an image with its embedding
-  ///
-  /// Adds an image and its embedding to the search index.
-  ///
-  /// Parameters:
-  /// - [image]: The image to index
-  /// - [embedding]: The embedding vector for the image
   Future<void> indexImage(ImageItem image, List<double> embedding) async {
     if (!_isInitialized) {
       throw StateError(
@@ -69,19 +114,21 @@ class ANNSearchService {
       );
     }
 
+    // Store in local maps (for metadata lookup and brute-force fallback)
     _imageEmbeddings[image.id] = embedding;
     _imageMetadata[image.id] = image;
+
+    // Map IDs for potential native HNSW use
+    if (!_imageIdToHnswId.containsKey(image.id)) {
+      _imageIdToHnswId[image.id] = _nextHnswId;
+      _hnswIdToImageId[_nextHnswId] = image.id;
+      _nextHnswId++;
+    }
 
     debugPrint('ANNSearchService: Indexed image ${image.id}');
   }
 
   /// Index multiple images in batch
-  ///
-  /// More efficient than calling [indexImage] multiple times.
-  ///
-  /// Parameters:
-  /// - [images]: List of images to index
-  /// - [embeddings]: Corresponding embedding vectors
   Future<void> indexBatch(
     List<ImageItem> images,
     List<List<double>> embeddings,
@@ -97,16 +144,9 @@ class ANNSearchService {
     debugPrint('ANNSearchService: Indexed ${images.length} images');
   }
 
-  /// Search for similar images using ANN
+  /// Search for similar images
   ///
-  /// Finds the k-nearest neighbors to the query embedding.
-  ///
-  /// Parameters:
-  /// - [queryEmbedding]: The query embedding vector
-  /// - [k]: Number of top results to return (default: 10)
-  /// - [threshold]: Minimum similarity score (0.0 to 1.0)
-  ///
-  /// Returns a list of matching images sorted by similarity
+  /// Uses native HNSW if available, falls back to brute-force.
   Future<List<ImageItem>> searchSimilar(
     List<double> queryEmbedding, {
     int k = defaultTopK,
@@ -122,26 +162,58 @@ class ANNSearchService {
     final stopwatch = Stopwatch()..start();
 
     try {
-      // TODO: Use actual ANN search from kitako_ann
-      // final results = await annClient.search(queryEmbedding, k: k);
+      List<ImageItem> results;
 
-      // For now, use brute force similarity search (mock)
-      final results = _bruteForceSearch(queryEmbedding, k, effectiveThreshold);
+      if (_usingNativeHnsw && _annClient != null && _annClient!.indexSize > 0) {
+        // Use native HNSW search
+        results = await _searchNativeHnsw(queryEmbedding, k, effectiveThreshold);
+      } else {
+        // Fall back to brute-force
+        results = _bruteForceSearch(queryEmbedding, k, effectiveThreshold);
+      }
 
       stopwatch.stop();
       debugPrint(
-        'ANNSearchService: Search completed in ${stopwatch.elapsedMilliseconds}ms, found ${results.length} results',
+        'ANNSearchService: Search completed in ${stopwatch.elapsedMilliseconds}ms, '
+        'found ${results.length} results (native: $_usingNativeHnsw)',
       );
 
       return results;
     } catch (e) {
       debugPrint('ANNSearchService: Search failed: $e');
-      rethrow;
+      // Fall back to brute force on error
+      return _bruteForceSearch(queryEmbedding, k, effectiveThreshold);
     }
+  }
+
+  /// Search using native HNSW
+  Future<List<ImageItem>> _searchNativeHnsw(
+    List<double> queryEmbedding,
+    int k,
+    double threshold,
+  ) async {
+    final searchResults = await _annClient!.search(
+      queryEmbedding,
+      k: k,
+      threshold: threshold,
+    );
+
+    final results = <ImageItem>[];
+    for (final result in searchResults) {
+      final imageId = _hnswIdToImageId[result.id];
+      if (imageId != null && _imageMetadata.containsKey(imageId)) {
+        results.add(_imageMetadata[imageId]!);
+      }
+    }
+
+    return results;
   }
 
   /// Get the total number of indexed images
   int get indexSize => _imageMetadata.length;
+
+  /// Get native index size
+  int get nativeIndexSize => _annClient?.indexSize ?? 0;
 
   /// Check if an image is indexed
   bool isIndexed(String imageId) => _imageMetadata.containsKey(imageId);
@@ -157,6 +229,9 @@ class ANNSearchService {
   void clearIndex() {
     _imageEmbeddings.clear();
     _imageMetadata.clear();
+    _hnswIdToImageId.clear();
+    _imageIdToHnswId.clear();
+    _nextHnswId = 0;
     debugPrint('ANNSearchService: Index cleared');
   }
 
@@ -165,6 +240,8 @@ class ANNSearchService {
     return {
       'totalImages': _imageMetadata.length,
       'totalEmbeddings': _imageEmbeddings.length,
+      'nativeIndexSize': _annClient?.indexSize ?? 0,
+      'usingNativeHnsw': _usingNativeHnsw,
       'dimensionality': _imageEmbeddings.isEmpty
           ? 0
           : _imageEmbeddings.values.first.length,
@@ -173,17 +250,16 @@ class ANNSearchService {
 
   /// Dispose of resources
   void dispose() {
+    _annClient?.dispose();
+    _annClient = null;
     clearIndex();
     _isInitialized = false;
     debugPrint('ANNSearchService: Disposed');
   }
 
-  // ========== Helper Methods ==========
+  // ========== Brute-Force Fallback ==========
 
-  /// Brute force similarity search (for mock implementation)
-  ///
-  /// Computes cosine similarity between query and all indexed embeddings.
-  /// Returns top-k results above threshold.
+  /// Brute force similarity search
   List<ImageItem> _bruteForceSearch(
     List<double> queryEmbedding,
     int k,
@@ -191,7 +267,6 @@ class ANNSearchService {
   ) {
     final similarities = <String, double>{};
 
-    // Compute similarity for each indexed image
     for (final entry in _imageEmbeddings.entries) {
       final similarity = _cosineSimilarity(queryEmbedding, entry.value);
       if (similarity >= threshold) {
@@ -199,21 +274,14 @@ class ANNSearchService {
       }
     }
 
-    // Sort by similarity (descending) and take top-k
     final sortedIds = similarities.keys.toList()
       ..sort((a, b) => similarities[b]!.compareTo(similarities[a]!));
 
     final topK = sortedIds.take(k);
-
     return topK.map((id) => _imageMetadata[id]!).toList();
   }
 
   /// Calculate cosine similarity between two vectors
-  ///
-  /// Returns a value between -1 and 1, where:
-  /// - 1 means identical
-  /// - 0 means orthogonal
-  /// - -1 means opposite
   double _cosineSimilarity(List<double> a, List<double> b) {
     if (a.length != b.length) {
       throw ArgumentError('Vectors must have same length');

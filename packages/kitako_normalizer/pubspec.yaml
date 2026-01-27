@@ -1,7 +1,7 @@
 name: kitako_normalizer
-description: "A new Flutter package project."
-version: 0.0.1
-homepage:
+description: "Taglish text normalizer for KitaKo image retrieval. Handles Filipino/Tagalog/English code-switching, abbreviations, and text speak."
+version: 0.1.0
+homepage: https://github.com/kitako/kitako_normalizer
 
 environment:
   sdk: ^3.10.4

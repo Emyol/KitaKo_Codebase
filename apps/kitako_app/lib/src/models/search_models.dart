@@ -134,8 +134,11 @@ class SearchState {
   /// Current status of the search
   final SearchStatus status;
 
-  /// Current search query
+  /// Current search query (original input)
   final String query;
+
+  /// Normalized query after Taglish processing
+  final String? normalizedQuery;
 
   /// Search results if available
   final SearchResult? result;
@@ -146,6 +149,7 @@ class SearchState {
   const SearchState({
     this.status = SearchStatus.idle,
     this.query = '',
+    this.normalizedQuery,
     this.result,
     this.error,
   });
@@ -154,12 +158,14 @@ class SearchState {
   SearchState copyWith({
     SearchStatus? status,
     String? query,
+    String? normalizedQuery,
     SearchResult? result,
     String? error,
   }) {
     return SearchState(
       status: status ?? this.status,
       query: query ?? this.query,
+      normalizedQuery: normalizedQuery ?? this.normalizedQuery,
       result: result ?? this.result,
       error: error ?? this.error,
     );

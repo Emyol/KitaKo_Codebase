@@ -1,0 +1,39 @@
+# Build outputs
+**/build/
+**/.dart_tool/
+
+# Flutter ephemeral files (large PDBs, DLLs)
+**/ephemeral/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Logs
+*.log
+
+# Dependencies
+.packages
+.pub-cache/
+pubspec.lock
+
+# Generated files
+*.g.dart
+*.freezed.dart
+
+# Native binaries (large files)
+*.dll
+*.so
+*.dylib
+*.pdb
+*.exe
+
+# But keep specific DLLs that are needed
+!packages/kitako_ann/kitako_ffi.dll
