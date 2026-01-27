@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:kitako_ann/kitako_ann.dart' as ann;
@@ -51,12 +52,16 @@ class AnnClientWrapper {
     required int k,
     required double threshold,
   }) async {
+    // Convert List<double> to Float32List
+    final float32Query = Float32List.fromList(query);
+    
     final results = await _client.search(
-      query,
+      float32Query,
       k: k,
       threshold: threshold,
     );
-    return results.map((r) => AnnSearchResult(id: r.id, score: r.score)).toList();
+    // Use similarity (derived from distance) as score
+    return results.map((r) => AnnSearchResult(id: r.id, score: r.similarity)).toList();
   }
 
   void dispose() => _client.dispose();
