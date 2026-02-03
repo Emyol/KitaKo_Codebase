@@ -18,26 +18,34 @@ class ImagePreprocessor {
   /// Preprocesses an image for the SigLIP image encoder.
   ///
   /// [imageBytes] - Raw image bytes (PNG, JPEG, etc.)
+  /// [targetSize] - Target image size (defaults to 224, can be 256 for SigLIP-2)
   ///
-  /// Returns a Float32List of shape [1, 224, 224, 3] with values
+  /// Returns a Float32List of shape [1, size, size, 3] with values
   /// normalized to [-1, 1] using mean=0.5 and std=0.5.
-  static Float32List preprocessImage(Uint8List imageBytes) {
+  static Float32List preprocessImage(
+    Uint8List imageBytes, {
+    int targetSize = ImagePreprocessor.targetSize,
+  }) {
     // Decode the image
     final image = img.decodeImage(imageBytes);
     if (image == null) {
       throw ArgumentError('Could not decode image');
     }
 
-    return preprocessDecodedImage(image);
+    return preprocessDecodedImage(image, targetSize: targetSize);
   }
 
   /// Preprocesses an already-decoded image.
   ///
   /// [image] - Decoded image object
+  /// [targetSize] - Target image size (defaults to 224, can be 256 for SigLIP-2)
   ///
   /// Returns a Float32List ready for model input.
-  static Float32List preprocessDecodedImage(img.Image image) {
-    // Resize to 224x224 using bilinear interpolation (resample=2 in config)
+  static Float32List preprocessDecodedImage(
+    img.Image image, {
+    int targetSize = ImagePreprocessor.targetSize,
+  }) {
+    // Resize to target size using bilinear interpolation (resample=2 in config)
     final resized = img.copyResize(
       image,
       width: targetSize,

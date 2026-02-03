@@ -37,3 +37,29 @@ pubspec.lock
 
 # But keep specific DLLs that are needed
 !packages/kitako_ann/kitako_ffi.dll
+
+# Large model/asset files
+assets/models/*.onnx
+assets/models/onnx/
+assets/indexes/
+dataset/images/
+
+# App-specific large assets
+apps/kitako_app/assets/models/*.onnx
+apps/kitako_app/assets/model/**/*.tflite
+apps/kitako_app/assets/index/
+
+# Python virtual environment
+.venv/
+
+# Windows reserved filename
+nul
+
+# Large ONNX model folders in tools
+tools/onnx_models_complete/
+tools/onnx_models_correct/
+tools/onnx_models_quantized/
+tools/xenova_models/
+
+# Test images
+assets/test_images/
