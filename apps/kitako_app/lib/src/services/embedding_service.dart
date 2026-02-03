@@ -76,6 +76,9 @@ class EmbeddingService {
   /// Asset paths for SigLIP-2 ONNX models (FP32)
   static const String _siglip2VisionAsset = 'assets/models/siglip2_vision_model_fp32.onnx';
   static const String _siglip2TextAsset = 'assets/models/siglip2_text_model_fp32.onnx';
+  
+  /// Asset path for SigLIP-2 tokenizer (256K vocabulary)
+  static const String _siglip2TokenizerAsset = 'assets/models/tokenizer/tokenizer.json';
 
   /// Whether the service is initialized
   bool get isInitialized => _isInitialized;
@@ -244,7 +247,7 @@ class EmbeddingService {
       await _onnxClient!.initialize(
         visionModelPath: visionPath,
         textModelPath: textPath,
-        tokenizerPath: _tokenizerAsset,
+        tokenizerPath: _siglip2TokenizerAsset,
         modelVersion: SiglipModelVersion.siglip2,
       );
 
@@ -344,19 +347,31 @@ class EmbeddingService {
     return false;
   }
 
-  /// Initialize with SigLIP-2 models from assets
+  /// Initialize with SigLIP-2 models
   ///
-  /// This loads the SigLIP-2 FP32 models directly from assets.
+  /// This tries to load SigLIP-2 FP32 models in this order:
+  /// 1. From downloaded/copied external files (/data/local/tmp/)
+  /// 2. From bundled assets (if available)
+  ///
   /// These models should have better multilingual support and semantic understanding.
   Future<bool> initializeWithSiglip2() async {
+    // First try to copy models from /data/local/tmp/ if they exist
+    await _downloadService.copyModelsFromTmp();
+
+    // Try downloaded models first
+    if (await _tryInitializeSiglip2Downloaded()) {
+      return true;
+    }
+
+    // Fallback to assets
     try {
-      debugPrint('EmbeddingService: Initializing with SigLIP-2 from assets...');
+      debugPrint('EmbeddingService: Trying SigLIP-2 from assets...');
 
       _onnxClient = OnnxEmbeddingService();
       await _onnxClient!.initialize(
         visionModelPath: _siglip2VisionAsset,
         textModelPath: _siglip2TextAsset,
-        tokenizerPath: _tokenizerAsset,
+        tokenizerPath: _siglip2TokenizerAsset,
         modelVersion: SiglipModelVersion.siglip2,
       );
 
@@ -364,7 +379,7 @@ class EmbeddingService {
       _modelVersion = SiglipModelVersion.siglip2;
       _isInitialized = true;
 
-      debugPrint('EmbeddingService: SigLIP-2 initialized successfully');
+      debugPrint('EmbeddingService: SigLIP-2 initialized from assets');
       debugPrint('  - Vision encoder ready: ${_onnxClient!.isImageEncoderReady}');
       debugPrint('  - Text encoder ready: ${_onnxClient!.isTextEncoderReady}');
       debugPrint('  - Model config: ${_onnxClient!.modelConfig}');

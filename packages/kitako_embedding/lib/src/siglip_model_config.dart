@@ -87,12 +87,14 @@ class SiglipModelConfig {
     imageStd: [0.5, 0.5, 0.5],
   );
 
-  /// Configuration for SigLIP-2 (base-patch16-256)
-  /// NOTE: Update output tensor names after inspecting the actual model
+  /// Configuration for SigLIP-2 (base-patch16-224)
+  /// NOTE: The actual model expects 224x224 input (14x14=196 patches)
+  /// despite the model name suggesting 256. This was determined by 
+  /// runtime error analysis.
   static const siglip2Config = SiglipModelConfig(
     version: SiglipModelVersion.siglip2,
     vocabularySize: 256000,
-    imageSize: 256,
+    imageSize: 224, // Model expects 224x224 -> 14x14=196 patches
     imageChannels: 3,
     maxTextLength: 64,
     embeddingDimension: 768,

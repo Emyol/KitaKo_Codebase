@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
 /// SigLIP text tokenizer using HuggingFace tokenizers format.
 ///
 /// This is a BPE (Byte-Pair Encoding) tokenizer compatible with the
@@ -33,9 +35,18 @@ class SiglipTokenizer {
   bool get isLoaded => _isLoaded;
 
   /// Loads the tokenizer from a tokenizer.json file (HuggingFace format).
+  /// 
+  /// [tokenizerJsonPath] can be an asset path (starting with 'assets/') or a file path.
   Future<void> loadFromFile(String tokenizerJsonPath) async {
-    final file = File(tokenizerJsonPath);
-    final content = await file.readAsString();
+    String content;
+    if (tokenizerJsonPath.startsWith('assets/')) {
+      // Load from Flutter assets
+      content = await rootBundle.loadString(tokenizerJsonPath);
+    } else {
+      // Load from file system
+      final file = File(tokenizerJsonPath);
+      content = await file.readAsString();
+    }
     await loadFromJson(content);
   }
 
@@ -45,15 +56,31 @@ class SiglipTokenizer {
 
     // Load vocabulary from model section
     final model = data['model'] as Map<String, dynamic>;
-    final vocabData = model['vocab'] as Map<String, dynamic>;
+    final vocabData = model['vocab'];
 
     _vocab = {};
     _reverseVocab = {};
-    vocabData.forEach((token, id) {
-      final tokenId = id as int;
-      _vocab[token] = tokenId;
-      _reverseVocab[tokenId] = token;
-    });
+
+    // Handle both dict format {'token': id} and list format [['token', score], ...]
+    if (vocabData is Map<String, dynamic>) {
+      // Dict format (old tokenizers)
+      vocabData.forEach((token, id) {
+        final tokenId = id as int;
+        _vocab[token] = tokenId;
+        _reverseVocab[tokenId] = token;
+      });
+    } else if (vocabData is List) {
+      // List format (Xenova/SentencePiece) - index is the token ID
+      for (int i = 0; i < vocabData.length; i++) {
+        if (vocabData[i] is List && vocabData[i].length >= 1) {
+          final token = vocabData[i][0] as String;
+          _vocab[token] = i;
+          _reverseVocab[i] = token;
+        }
+      }
+    } else {
+      throw StateError('Unsupported vocab format: ${vocabData.runtimeType}');
+    }
 
     // Load added tokens (special tokens with potentially different IDs)
     final addedTokens = data['added_tokens'] as List<dynamic>?;
@@ -66,22 +93,25 @@ class SiglipTokenizer {
       }
     }
 
-    // Load merges - format is array of [token1, token2] pairs
-    final mergesData = model['merges'] as List<dynamic>;
+    // Load merges - format is array of [token1, token2] pairs (optional for SentencePiece)
     _merges = [];
     _mergeRanks = {};
-    for (int i = 0; i < mergesData.length; i++) {
-      final merge = mergesData[i];
-      if (merge is List && merge.length == 2) {
-        final parts = [merge[0].toString(), merge[1].toString()];
-        _merges.add(parts);
-        _mergeRanks['${parts[0]} ${parts[1]}'] = i;
-      } else if (merge is String) {
-        // Fallback for space-separated format
-        final parts = merge.split(' ');
-        if (parts.length == 2) {
+
+    if (model.containsKey('merges')) {
+      final mergesData = model['merges'] as List<dynamic>;
+      for (int i = 0; i < mergesData.length; i++) {
+        final merge = mergesData[i];
+        if (merge is List && merge.length == 2) {
+          final parts = [merge[0].toString(), merge[1].toString()];
           _merges.add(parts);
-          _mergeRanks[merge] = i;
+          _mergeRanks['${parts[0]} ${parts[1]}'] = i;
+        } else if (merge is String) {
+          // Fallback for space-separated format
+          final parts = merge.split(' ');
+          if (parts.length == 2) {
+            _merges.add(parts);
+            _mergeRanks[merge] = i;
+          }
         }
       }
     }
@@ -154,56 +184,72 @@ class SiglipTokenizer {
     return tokens.join('').replaceAll('▁', ' ').trim();
   }
 
-  /// Internal tokenization using BPE.
+  /// Internal tokenization using Unigram/SentencePiece algorithm.
+  ///
+  /// For SigLIP, we use a simplified approach that:
+  /// 1. Splits text into words
+  /// 2. Adds word boundary markers (▁)
+  /// 3. Looks up complete words in vocab first
+  /// 4. Falls back to character-level tokenization if needed
   List<int> _tokenize(String text) {
     // Normalize text (basic)
     text = text.toLowerCase().trim();
 
-    // For SentencePiece-style tokenizers, add word boundary marker
-    text = '▁${text.replaceAll(' ', '▁')}';
+    // Split into words
+    final words = text.split(' ');
+    final result = <int>[];
 
-    // Convert to initial character tokens
-    List<String> tokens = text.split('').toList();
+    for (final word in words) {
+      if (word.isEmpty) continue;
 
-    // Apply BPE merges
-    tokens = _applyBpe(tokens);
+      // Add word boundary marker
+      final tokenWithMarker = '▁$word';
 
-    // Convert to IDs
-    return tokens.map((token) {
-      return _vocab[token] ?? unkTokenId;
-    }).toList();
+      // Try to find the complete word in vocab first
+      if (_vocab.containsKey(tokenWithMarker)) {
+        result.add(_vocab[tokenWithMarker]!);
+      } else {
+        // Fall back to subword tokenization
+        final subwordIds = _tokenizeSubword(tokenWithMarker);
+        result.addAll(subwordIds);
+      }
+    }
+
+    return result;
   }
 
-  /// Applies BPE merges to a list of tokens.
-  List<String> _applyBpe(List<String> tokens) {
-    while (tokens.length >= 2) {
-      // Find the best merge (lowest rank)
-      int? bestIdx;
-      int? bestRank;
+  /// Tokenizes a subword using greedy longest-match approach.
+  List<int> _tokenizeSubword(String text) {
+    final result = <int>[];
+    int pos = 0;
 
-      for (int i = 0; i < tokens.length - 1; i++) {
-        final pair = '${tokens[i]} ${tokens[i + 1]}';
-        final rank = _mergeRanks[pair];
-        if (rank != null && (bestRank == null || rank < bestRank)) {
-          bestRank = rank;
-          bestIdx = i;
+    while (pos < text.length) {
+      // Try to find the longest matching token starting at pos
+      int? bestLen;
+      int? bestId;
+
+      for (int len = text.length - pos; len > 0; len--) {
+        final substr = text.substring(pos, pos + len);
+        if (_vocab.containsKey(substr)) {
+          bestLen = len;
+          bestId = _vocab[substr]!;
+          break;
         }
       }
 
-      // No more merges possible
-      if (bestIdx == null) break;
-
-      // Apply the merge
-      final merged = tokens[bestIdx] + tokens[bestIdx + 1];
-      tokens = [
-        ...tokens.sublist(0, bestIdx),
-        merged,
-        ...tokens.sublist(bestIdx + 2),
-      ];
+      if (bestLen != null && bestId != null) {
+        result.add(bestId);
+        pos += bestLen;
+      } else {
+        // No match found, use unknown token for this character
+        result.add(unkTokenId);
+        pos++;
+      }
     }
 
-    return tokens;
+    return result;
   }
+
 
   /// Gets the vocabulary size.
   int get vocabSize => _vocab.length;

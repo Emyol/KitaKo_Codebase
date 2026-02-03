@@ -67,7 +67,7 @@ class AnnClientWrapper {
   void dispose() => _client.dispose();
 }
 
-/// Platform-agnostic search result
+/// Platform-agnostic search result 
 class AnnSearchResult {
   final int id;
   final double score;

@@ -46,9 +46,26 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   path_provider: ^2.1.0
+  
+  # Image and media access
+  photo_manager: ^3.6.0
+  
+  # Sharing functionality
+  share_plus: ^10.1.4
+  
+  # Image picker for image-to-image search
+  image_picker: ^1.1.2
+  
+  # ONNX Runtime for ML inference
+  onnxruntime: ^1.4.1
+  
+  # HTTP for model downloads
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -74,6 +91,7 @@ flutter:
     - assets/model/text_encoder/
     - assets/index/
     - assets/tokenizer/
+    - assets/models/tokenizer/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
