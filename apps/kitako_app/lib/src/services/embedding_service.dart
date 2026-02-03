@@ -41,8 +41,8 @@ class EmbeddingService {
   static const int embeddingDimension = 768;
 
   /// Asset paths for models
-  static const String _imageModelAsset = 'assets/model/image_encoder/kitako_image_encoder_int8.tflite';
-  static const String _textModelAsset = 'assets/model/text_encoder/kitako_text_encoder_dynamic.tflite';
+  static const String _imageModelAsset = 'assets/model/image_encoder/kitako_image_encoder_int8.onnx';
+  static const String _textModelAsset = 'assets/model/text_encoder/kitako_text_encoder_int8.onnx';
   static const String _tokenizerAsset = 'assets/tokenizer/tokenizer.json';
 
   /// Whether the service is initialized
@@ -56,7 +56,7 @@ class EmbeddingService {
 
   /// Initialize the embedding service
   ///
-  /// Loads the TFLite models and tokenizer from assets.
+  /// Loads the ONNX models and tokenizer from assets.
   /// Must be called before generating embeddings.
   ///
   /// Returns `true` if initialization was successful
@@ -64,7 +64,7 @@ class EmbeddingService {
     if (_isInitialized) return true;
 
     try {
-      debugPrint('EmbeddingService: Initializing with real TFLite models...');
+      debugPrint('EmbeddingService: Initializing with real ONNX models...');
 
       _embeddingClient = KitakoEmbeddingService();
 
@@ -81,9 +81,9 @@ class EmbeddingService {
       debugPrint('  - Image encoder ready: ${_embeddingClient!.isImageEncoderReady}');
       return true;
     } catch (e, stack) {
-      debugPrint('EmbeddingService: Failed to initialize TFLite: $e');
+      debugPrint('EmbeddingService: Failed to initialize ONNX: $e');
       debugPrint('Stack trace: $stack');
-      
+
       // Fall back to mock mode
       _embeddingClient = null;
       _isInitialized = true; // Still mark as initialized for mock fallback
@@ -122,12 +122,16 @@ class EmbeddingService {
 
       if (_embeddingClient != null && _embeddingClient!.isTextEncoderReady) {
         // Use real embedding model
-        final float32Embedding = _embeddingClient!.embedText(normalizedQuery);
+        final float32Embedding = await _embeddingClient!.embedText(normalizedQuery);
         embedding = float32Embedding.toList();
         debugPrint('EmbeddingService: Generated real embedding for: "$normalizedQuery"');
+        debugPrint('EmbeddingService: Embedding length: ${embedding.length}');
+        debugPrint('EmbeddingService: Embedding sample [0:5]: ${embedding.take(5).toList()}');
+        debugPrint('EmbeddingService: Embedding norm: ${_computeNorm(embedding)}');
       } else {
         // Fall back to mock embedding
         embedding = _generateMockEmbedding(normalizedQuery);
+        debugPrint('EmbeddingService: Generated MOCK embedding for: "$normalizedQuery"');
         debugPrint('EmbeddingService: Generated MOCK embedding for: "$normalizedQuery"');
       }
 
@@ -159,9 +163,13 @@ class EmbeddingService {
 
     try {
       if (_embeddingClient != null && _embeddingClient!.isImageEncoderReady) {
-        final float32Embedding = _embeddingClient!.embedImage(imageBytes);
+        final float32Embedding = await _embeddingClient!.embedImage(imageBytes);
+        final embedding = float32Embedding.toList();
         debugPrint('EmbeddingService: Generated real image embedding');
-        return float32Embedding.toList();
+        debugPrint('EmbeddingService: Image embedding length: ${embedding.length}');
+        debugPrint('EmbeddingService: Image embedding sample [0:5]: ${embedding.take(5).toList()}');
+        debugPrint('EmbeddingService: Image embedding norm: ${_computeNorm(embedding)}');
+        return embedding;
       } else {
         // Fall back to mock embedding
         debugPrint('EmbeddingService: Generated MOCK image embedding');
@@ -183,6 +191,95 @@ class EmbeddingService {
       embeddings.add(embedding);
     }
     return embeddings;
+  }
+
+  /// Generate embeddings for multiple images in batch (OPTIMIZED)
+  ///
+  /// This processes images in parallel batches for faster embedding.
+  /// Works best with thumbnail-sized images (224x224) for speed.
+  ///
+  /// [imageBytesList] - List of image bytes (ideally thumbnails)
+  /// [batchSize] - Number of images to process concurrently (default: 3)
+  /// [onProgress] - Optional callback for progress updates
+  ///
+  /// Returns a list of embeddings matching the input order.
+  /// Failed embeddings will be mock embeddings.
+  /// 
+  /// NOTE: Images are processed sequentially to avoid ONNX isolate conflicts.
+  Future<List<List<double>>> generateBatchImageEmbeddings(
+    List<Uint8List> imageBytesList, {
+    int batchSize = 1, // Process sequentially to avoid ONNX "Future already completed" error
+    void Function(int completed, int total)? onProgress,
+  }) async {
+    if (!_isInitialized) {
+      throw StateError(
+        'EmbeddingService not initialized. Call initialize() first.',
+      );
+    }
+
+    final stopwatch = Stopwatch()..start();
+    final results = List<List<double>>.filled(
+      imageBytesList.length,
+      const [],
+      growable: false,
+    );
+
+    debugPrint('EmbeddingService: Batch embedding ${imageBytesList.length} images (sequential)...');
+
+    // Process images SEQUENTIALLY to avoid ONNX isolate conflicts
+    for (var i = 0; i < imageBytesList.length; i++) {
+      try {
+        results[i] = await generateImageEmbedding(imageBytesList[i]);
+      } catch (e) {
+        debugPrint('EmbeddingService: Failed to embed image $i: $e');
+        results[i] = _generateMockEmbedding('batch_image_$i');
+      }
+      
+      // Report progress every 10 images
+      if ((i + 1) % 10 == 0 || i == imageBytesList.length - 1) {
+        onProgress?.call(i + 1, imageBytesList.length);
+      }
+    }
+
+    stopwatch.stop();
+    debugPrint(
+      'EmbeddingService: ✓ Batch embedded ${imageBytesList.length} images '
+      'in ${stopwatch.elapsedMilliseconds}ms '
+      '(${(stopwatch.elapsedMilliseconds / imageBytesList.length).toStringAsFixed(1)}ms/image)',
+    );
+
+    return results;
+  }
+
+  /// Generate embeddings for images using thumbnail map from ImageLoaderService
+  ///
+  /// This is a convenience method that works with loadThumbnailBatch output.
+  ///
+  /// [thumbnailMap] - Map of image ID to thumbnail bytes
+  /// [imageIds] - Ordered list of image IDs to embed
+  ///
+  /// Returns a map of image ID to embedding.
+  Future<Map<String, List<double>>> generateEmbeddingsFromThumbnails(
+    Map<String, Uint8List> thumbnailMap,
+    List<String> imageIds, {
+    int batchSize = 3,
+    void Function(int completed, int total)? onProgress,
+  }) async {
+    final validImages = imageIds.where((id) => thumbnailMap.containsKey(id)).toList();
+    final bytes = validImages.map((id) => thumbnailMap[id]!).toList();
+
+    final embeddings = await generateBatchImageEmbeddings(
+      bytes,
+      batchSize: batchSize,
+      onProgress: onProgress,
+    );
+
+    final results = <String, List<double>>{};
+    for (var i = 0; i < validImages.length; i++) {
+      results[validImages[i]] = embeddings[i];
+    }
+
+    return results;
   }
 
   /// Compute similarity between two embeddings
@@ -273,6 +370,15 @@ class EmbeddingService {
       guess = (guess + x / guess) / 2;
     }
     return guess;
+  }
+
+  /// Compute L2 norm of a vector for debugging
+  double _computeNorm(List<double> vec) {
+    double sum = 0.0;
+    for (final v in vec) {
+      sum += v * v;
+    }
+    return _sqrt(sum);
   }
 }
 

@@ -1,20 +1,21 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter/services.dart';
+import 'package:onnxruntime/onnxruntime.dart';
 
 /// SigLIP inference service for generating image and text embeddings.
 ///
-/// This class handles TFLite model loading and inference for the KitaKo
+/// This class handles ONNX model loading and inference for the KitaKo
 /// SigLIP-based embedding models.
 class SiglipInference {
-  Interpreter? _imageInterpreter;
-  Interpreter? _textInterpreter;
+  OrtSession? _imageSession;
+  OrtSession? _textSession;
 
   bool _isImageModelLoaded = false;
   bool _isTextModelLoaded = false;
 
-  /// Image model input shape: [1, 224, 224, 3] float32
+  /// Image model input shape: [1, 3, 224, 224] float32 (NCHW format)
   static const int imageSize = 224;
   static const int imageChannels = 3;
 
@@ -30,13 +31,20 @@ class SiglipInference {
   /// Whether the text encoder model is loaded
   bool get isTextModelLoaded => _isTextModelLoaded;
 
-  /// Loads the image encoder model from the given path.
+  /// Loads the image encoder model from the given asset path.
   ///
-  /// [modelPath] should be the full path to the .tflite file.
-  /// For assets, use a method to copy to a temp directory first.
+  /// [modelPath] should be the asset path to the .onnx file.
   Future<void> loadImageModel(String modelPath) async {
     try {
-      _imageInterpreter = await Interpreter.fromAsset(modelPath);
+      // Load model from assets
+      final modelData = await rootBundle.load(modelPath);
+      final modelBytes = modelData.buffer.asUint8List();
+
+      final sessionOptions = OrtSessionOptions();
+      // Enable multi-threading for faster inference
+      sessionOptions.setIntraOpNumThreads(4);
+      sessionOptions.setInterOpNumThreads(2);
+      _imageSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
       _isImageModelLoaded = true;
     } catch (e) {
       _isImageModelLoaded = false;
@@ -47,7 +55,15 @@ class SiglipInference {
   /// Loads the image encoder model from a file path (not asset).
   Future<void> loadImageModelFromFile(String filePath) async {
     try {
-      _imageInterpreter = Interpreter.fromFile(File(filePath));
+      // Read file as bytes to avoid path encoding issues on Windows
+      final file = File(filePath);
+      final modelBytes = await file.readAsBytes();
+      
+      final sessionOptions = OrtSessionOptions();
+      // Enable multi-threading for faster inference
+      sessionOptions.setIntraOpNumThreads(4);
+      sessionOptions.setInterOpNumThreads(2);
+      _imageSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
       _isImageModelLoaded = true;
     } catch (e) {
       _isImageModelLoaded = false;
@@ -58,7 +74,15 @@ class SiglipInference {
   /// Loads the text encoder model from the given asset path.
   Future<void> loadTextModel(String modelPath) async {
     try {
-      _textInterpreter = await Interpreter.fromAsset(modelPath);
+      // Load model from assets
+      final modelData = await rootBundle.load(modelPath);
+      final modelBytes = modelData.buffer.asUint8List();
+
+      final sessionOptions = OrtSessionOptions();
+      // Enable multi-threading for faster inference
+      sessionOptions.setIntraOpNumThreads(4);
+      sessionOptions.setInterOpNumThreads(2);
+      _textSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
       _isTextModelLoaded = true;
     } catch (e) {
       _isTextModelLoaded = false;
@@ -69,7 +93,15 @@ class SiglipInference {
   /// Loads the text encoder model from a file path (not asset).
   Future<void> loadTextModelFromFile(String filePath) async {
     try {
-      _textInterpreter = Interpreter.fromFile(File(filePath));
+      // Read file as bytes to avoid path encoding issues on Windows
+      final file = File(filePath);
+      final modelBytes = await file.readAsBytes();
+      
+      final sessionOptions = OrtSessionOptions();
+      // Enable multi-threading for faster inference
+      sessionOptions.setIntraOpNumThreads(4);
+      sessionOptions.setInterOpNumThreads(2);
+      _textSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
       _isTextModelLoaded = true;
     } catch (e) {
       _isTextModelLoaded = false;
@@ -79,68 +111,189 @@ class SiglipInference {
 
   /// Generates an embedding from a preprocessed image.
   ///
-  /// [imageData] must be a Float32List of shape [1, 224, 224, 3]
+  /// [imageData] must be a Float32List of shape [1, 3, 224, 224] (NCHW format)
   /// with values normalized to [-1, 1] (mean=0.5, std=0.5 applied).
   ///
   /// Returns a Float32List of length 768 (the embedding vector).
-  Float32List embedImage(Float32List imageData) {
-    if (!_isImageModelLoaded || _imageInterpreter == null) {
+  Future<Float32List> embedImage(Float32List imageData) async {
+    if (!_isImageModelLoaded || _imageSession == null) {
       throw StateError('Image model not loaded. Call loadImageModel first.');
     }
 
-    // Validate input size: 1 * 224 * 224 * 3 = 150528
-    const expectedSize = 1 * imageSize * imageSize * imageChannels;
+    // Validate input size: 1 * 3 * 224 * 224 = 150528
+    const expectedSize = 1 * imageChannels * imageSize * imageSize;
     if (imageData.length != expectedSize) {
       throw ArgumentError(
         'Invalid image data size. Expected $expectedSize, got ${imageData.length}',
       );
     }
 
-    // Reshape input to [1, 224, 224, 3]
-    final input = imageData.reshape([1, imageSize, imageSize, imageChannels]);
+    // Create input tensor with shape [1, 3, 224, 224] (NCHW format)
+    // IMPORTANT: Use Float32List directly to ensure tensor(float) type, not tensor(double)
+    final inputOrt = OrtValueTensor.createTensorWithDataList(
+      imageData,
+      [1, imageChannels, imageSize, imageSize],
+    );
 
-    // Prepare output buffer [1, 768]
-    final output = List.filled(1 * embeddingDim, 0.0).reshape([1, embeddingDim]);
+    // Get input name from the model
+    final inputNames = _imageSession!.inputNames;
+    final runOptions = OrtRunOptions();
 
-    // Run inference
-    _imageInterpreter!.run(input, output);
+    try {
+      // Run inference
+      final outputs = await _imageSession!.runAsync(
+        runOptions,
+        {inputNames.first: inputOrt},
+      );
 
-    // Extract and return the embedding
-    return Float32List.fromList((output[0] as List).cast<double>().map((e) => e.toDouble()).toList());
+      // Extract output tensor
+      if (outputs == null || outputs.isEmpty) {
+        throw StateError('Model produced no output');
+      }
+
+      final outputTensor = outputs.first;
+      if (outputTensor == null) {
+        throw StateError('Output tensor is null');
+      }
+
+      // Get the embedding data - output shape is [1, 768]
+      final outputValue = outputTensor.value;
+      Float32List embedding;
+
+      if (outputValue is List) {
+        // Handle nested list output [1, 768] -> [[...]]
+        if (outputValue.isNotEmpty && outputValue.first is List) {
+          final innerList = outputValue.first as List;
+          embedding = Float32List.fromList(
+            innerList.map((e) => (e as num).toDouble()).toList(),
+          );
+        } else {
+          // Handle flat list
+          embedding = Float32List.fromList(
+            outputValue.map((e) => (e as num).toDouble()).toList(),
+          );
+        }
+      } else if (outputValue is Float32List) {
+        embedding = outputValue;
+      } else {
+        throw StateError('Unexpected output type: ${outputValue.runtimeType}');
+      }
+
+      // Clean up
+      inputOrt.release();
+      runOptions.release();
+      for (final output in outputs) {
+        output?.release();
+      }
+
+      return embedding;
+    } catch (e) {
+      inputOrt.release();
+      runOptions.release();
+      rethrow;
+    }
   }
 
   /// Generates an embedding from tokenized text.
   ///
-  /// [tokenIds] must be an Int64List (or List<int>) of shape [1, 64].
+  /// [tokenIds] must be a List<int> of shape [1, 32].
   /// Shorter sequences should be padded with 0 (pad token).
   ///
   /// Returns a Float32List of length 768 (the embedding vector).
-  Float32List embedText(List<int> tokenIds) {
-    if (!_isTextModelLoaded || _textInterpreter == null) {
+  Future<Float32List> embedText(List<int> tokenIds) async {
+    if (!_isTextModelLoaded || _textSession == null) {
       throw StateError('Text model not loaded. Call loadTextModel first.');
     }
 
     // Ensure we have exactly maxTextLength tokens
     List<int> paddedTokens;
+    List<int> attentionMask;
+
     if (tokenIds.length >= maxTextLength) {
       paddedTokens = tokenIds.sublist(0, maxTextLength);
+      attentionMask = List.filled(maxTextLength, 1); // All tokens are real
     } else {
       paddedTokens = List<int>.from(tokenIds)
         ..addAll(List.filled(maxTextLength - tokenIds.length, 0)); // pad with 0
+
+      // Attention mask: 1 for real tokens, 0 for padding
+      attentionMask = List.filled(tokenIds.length, 1)
+        ..addAll(List.filled(maxTextLength - tokenIds.length, 0));
     }
 
-    // TFLite expects int64, reshape to [1, 64]
-    // Note: Dart's tflite_flutter handles int64 as List<int> internally
-    final input = [paddedTokens];
+    // Create input tensors with shape [1, 32]
+    final inputIdsOrt = OrtValueTensor.createTensorWithDataList(
+      paddedTokens,
+      [1, maxTextLength],
+    );
 
-    // Prepare output buffer [1, 768]
-    final output = List.filled(1 * embeddingDim, 0.0).reshape([1, embeddingDim]);
+    final attentionMaskOrt = OrtValueTensor.createTensorWithDataList(
+      attentionMask,
+      [1, maxTextLength],
+    );
 
-    // Run inference
-    _textInterpreter!.run(input, output);
+    // Get input names from the model
+    final inputNames = _textSession!.inputNames;
+    final runOptions = OrtRunOptions();
 
-    // Extract and return the embedding
-    return Float32List.fromList((output[0] as List).cast<double>().map((e) => e.toDouble()).toList());
+    try {
+      // Run inference with both input_ids and attention_mask
+      final outputs = await _textSession!.runAsync(
+        runOptions,
+        {
+          inputNames[0]: inputIdsOrt,  // Usually 'input_ids'
+          inputNames[1]: attentionMaskOrt,  // Usually 'attention_mask'
+        },
+      );
+
+      // Extract output tensor
+      if (outputs == null || outputs.isEmpty) {
+        throw StateError('Model produced no output');
+      }
+
+      final outputTensor = outputs.first;
+      if (outputTensor == null) {
+        throw StateError('Output tensor is null');
+      }
+
+      // Get the embedding data - output shape is [1, 768]
+      final outputValue = outputTensor.value;
+      Float32List embedding;
+
+      if (outputValue is List) {
+        // Handle nested list output [1, 768] -> [[...]]
+        if (outputValue.isNotEmpty && outputValue.first is List) {
+          final innerList = outputValue.first as List;
+          embedding = Float32List.fromList(
+            innerList.map((e) => (e as num).toDouble()).toList(),
+          );
+        } else {
+          // Handle flat list
+          embedding = Float32List.fromList(
+            outputValue.map((e) => (e as num).toDouble()).toList(),
+          );
+        }
+      } else if (outputValue is Float32List) {
+        embedding = outputValue;
+      } else {
+        throw StateError('Unexpected output type: ${outputValue.runtimeType}');
+      }
+
+      // Clean up
+      inputIdsOrt.release();
+      attentionMaskOrt.release();
+      runOptions.release();
+      for (final output in outputs) {
+        output?.release();
+      }
+
+      return embedding;
+    } catch (e) {
+      inputIdsOrt.release();
+      attentionMaskOrt.release();
+      runOptions.release();
+      rethrow;
+    }
   }
 
   /// Computes cosine similarity between two embeddings.
@@ -166,12 +319,12 @@ class SiglipInference {
     return dotProduct / (_sqrt(normA) * _sqrt(normB));
   }
 
-  /// Releases resources held by the interpreters.
+  /// Releases resources held by the ONNX sessions.
   void dispose() {
-    _imageInterpreter?.close();
-    _textInterpreter?.close();
-    _imageInterpreter = null;
-    _textInterpreter = null;
+    _imageSession?.release();
+    _textSession?.release();
+    _imageSession = null;
+    _textSession = null;
     _isImageModelLoaded = false;
     _isTextModelLoaded = false;
   }
@@ -186,41 +339,4 @@ double _sqrt(double x) {
     guess = (guess + x / guess) / 2;
   }
   return guess;
-}
-
-/// Extension to reshape lists for TFLite input/output
-extension ListReshape<T> on List<T> {
-  List reshape(List<int> shape) {
-    if (shape.length == 1) {
-      return this;
-    } else if (shape.length == 2) {
-      final rows = shape[0];
-      final cols = shape[1];
-      return List.generate(rows, (i) => sublist(i * cols, (i + 1) * cols));
-    } else if (shape.length == 4) {
-      final batch = shape[0];
-      final height = shape[1];
-      final width = shape[2];
-      final channels = shape[3];
-      final result = <List<List<List<T>>>>[];
-      int idx = 0;
-      for (int b = 0; b < batch; b++) {
-        final batchData = <List<List<T>>>[];
-        for (int h = 0; h < height; h++) {
-          final rowData = <List<T>>[];
-          for (int w = 0; w < width; w++) {
-            final pixel = <T>[];
-            for (int c = 0; c < channels; c++) {
-              pixel.add(this[idx++]);
-            }
-            rowData.add(pixel);
-          }
-          batchData.add(rowData);
-        }
-        result.add(batchData);
-      }
-      return result;
-    }
-    throw UnsupportedError('Reshape only supports 1D, 2D, and 4D shapes');
-  }
 }

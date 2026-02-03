@@ -1,18 +1,22 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 import '../theme/theme_notifier.dart';
 import '../../services/image_search_service.dart';
+import '../../services/image_loader_service.dart';
 import '../../models/search_models.dart';
 
 class HomeScreen extends StatefulWidget {
   final ThemeNotifier themeNotifier;
   final ImageSearchService searchService;
+  final ImageLoaderService? imageLoaderService;
 
   const HomeScreen({
     super.key,
     required this.themeNotifier,
     required this.searchService,
+    this.imageLoaderService,
   });
 
   @override
@@ -21,6 +25,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<ImageItem> _images = [];
+  final Map<String, Uint8List> _thumbnailCache = {};
+  bool _loadingThumbnails = false;
+  ImageLoaderService? _imageLoader;
 
   @override
   void initState() {
@@ -34,7 +41,72 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _images = images;
       });
+      // Load thumbnails for display
+      _loadThumbnails();
     }
+  }
+
+  Future<void> _loadThumbnails() async {
+    if (_loadingThumbnails || _images.isEmpty) return;
+    _loadingThumbnails = true;
+
+    // Get the image loader service
+    _imageLoader = widget.imageLoaderService ?? ImageLoaderService();
+    if (widget.imageLoaderService == null) {
+      await _imageLoader!.initialize();
+      // Load images if not already loaded
+      await _imageLoader!.loadDeviceImages();
+    }
+
+    // Load thumbnails in batches for visible images
+    final batchSize = 10;
+    for (var i = 0; i < _images.length; i += batchSize) {
+      if (!mounted) break;
+
+      final batch = _images.skip(i).take(batchSize).toList();
+      final thumbnails = await _imageLoader!.loadThumbnailBatch(batch, batchSize: 5);
+
+      if (mounted) {
+        setState(() {
+          _thumbnailCache.addAll(thumbnails);
+        });
+      }
+    }
+
+    _loadingThumbnails = false;
+  }
+
+  Widget _buildPlaceholder(bool isDark, String name) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.image_outlined,
+            color: isDark
+                ? Colors.white.withOpacity(0.3)
+                : Colors.black.withOpacity(0.3),
+            size: 40,
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              name,
+              style: TextStyle(
+                color: isDark
+                    ? Colors.white.withOpacity(0.5)
+                    : Colors.black.withOpacity(0.5),
+                fontSize: 10,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _openSearch() {
@@ -116,6 +188,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       itemCount: _images.length,
                       itemBuilder: (context, index) {
                         final image = _images[index];
+                        final thumbnail = _thumbnailCache[image.id];
+
                         return Container(
                           decoration: BoxDecoration(
                             color: isDark
@@ -123,38 +197,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                 : const Color(0xFFE0E0E0),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.image_outlined,
-                                  color: isDark
-                                      ? Colors.white.withOpacity(0.3)
-                                      : Colors.black.withOpacity(0.3),
-                                  size: 40,
-                                ),
-                                const SizedBox(height: 4),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                  ),
-                                  child: Text(
-                                    image.name,
-                                    style: TextStyle(
-                                      color: isDark
-                                          ? Colors.white.withOpacity(0.5)
-                                          : Colors.black.withOpacity(0.5),
-                                      fontSize: 10,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: thumbnail != null
+                              ? Image.memory(
+                                  thumbnail,
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      _buildPlaceholder(isDark, image.name),
+                                )
+                              : _buildPlaceholder(isDark, image.name),
                         );
                       },
                     ),

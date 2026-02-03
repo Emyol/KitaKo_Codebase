@@ -43,7 +43,7 @@ class ANNSearchService {
   int _nextHnswId = 0;
 
   /// Number of top results to return by default
-  static const int defaultTopK = 10;
+  static const int defaultTopK = 30;
 
   /// Similarity threshold (0.0 to 1.0)
   static const double similarityThreshold = 0.3;
@@ -98,6 +98,11 @@ class ANNSearchService {
       _indexAsset,
       'ann_index.bin',
     );
+
+    // If no valid index file, skip native initialization
+    if (indexPath == null) {
+      throw StateError('No pre-built ANN index available');
+    }
 
     _annClient = await platform.AnnPlatformHelper.createClient(
       indexPath: indexPath,
@@ -217,6 +222,11 @@ class ANNSearchService {
 
   /// Check if an image is indexed
   bool isIndexed(String imageId) => _imageMetadata.containsKey(imageId);
+q
+  /// Get all indexed images
+  List<ImageItem> getAllIndexedImages() {
+    return _imageMetadata.values.toList();
+  }
 
   /// Remove an image from the index
   void removeImage(String imageId) {
@@ -265,17 +275,37 @@ class ANNSearchService {
     int k,
     double threshold,
   ) {
+    debugPrint('ANNSearchService: Brute force search starting...');
+    debugPrint('ANNSearchService: Query embedding length: ${queryEmbedding.length}');
+    debugPrint('ANNSearchService: Indexed images: ${_imageEmbeddings.length}');
+    debugPrint('ANNSearchService: Threshold: $threshold');
+    
     final similarities = <String, double>{};
+    double maxSimilarity = double.negativeInfinity;
+    double minSimilarity = double.infinity;
 
     for (final entry in _imageEmbeddings.entries) {
       final similarity = _cosineSimilarity(queryEmbedding, entry.value);
-      if (similarity >= threshold) {
+      if (similarity > maxSimilarity) maxSimilarity = similarity;
+      if (similarity < minSimilarity) minSimilarity = similarity;
+      
+      // For testing: use threshold 0.0 to see all results
+      if (similarity >= 0.0) {
         similarities[entry.key] = similarity;
       }
     }
 
+    debugPrint('ANNSearchService: Similarity range: $minSimilarity to $maxSimilarity');
+    debugPrint('ANNSearchService: Images passing threshold: ${similarities.length}');
+
     final sortedIds = similarities.keys.toList()
       ..sort((a, b) => similarities[b]!.compareTo(similarities[a]!));
+
+    // Log top 5 similarities
+    final top5 = sortedIds.take(5);
+    for (final id in top5) {
+      debugPrint('ANNSearchService: Top result: $id = ${similarities[id]}');
+    }
 
     final topK = sortedIds.take(k);
     return topK.map((id) => _imageMetadata[id]!).toList();

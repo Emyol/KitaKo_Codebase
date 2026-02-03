@@ -26,22 +26,22 @@ class KitakoEmbeddingService {
 
   /// Initializes the embedding service with model and tokenizer files.
   ///
-  /// [imageModelPath] - Path to the image encoder TFLite model (int8)
-  /// [textModelPath] - Path to the text encoder TFLite model (dynamic)
+  /// [imageModelPath] - Path to the image encoder ONNX model (int8)
+  /// [textModelPath] - Path to the text encoder ONNX model (int8)
   /// [tokenizerPath] - Path to the tokenizer.json file
   ///
-  /// Pass asset paths for Flutter assets, or file paths for file system.
+  /// Pass asset paths for Flutter assets (e.g., 'assets/model/...').
   Future<void> initialize({
     required String imageModelPath,
     required String textModelPath,
     required String tokenizerPath,
   }) async {
-    // Load models (asset paths)
+    // Load models from assets
     await _inference.loadImageModel(imageModelPath);
     await _inference.loadTextModel(textModelPath);
 
-    // Load tokenizer
-    await _tokenizer.loadFromFile(tokenizerPath);
+    // Load tokenizer from asset
+    await _tokenizer.loadFromAsset(tokenizerPath);
 
     _isInitialized = true;
   }
@@ -64,14 +64,14 @@ class KitakoEmbeddingService {
   /// [imageBytes] - Raw image bytes (JPEG, PNG, etc.)
   ///
   /// Returns a normalized 768-dimensional embedding vector.
-  Float32List embedImage(Uint8List imageBytes) {
+  Future<Float32List> embedImage(Uint8List imageBytes) async {
     _ensureImageReady();
 
-    // Preprocess the image
-    final preprocessed = ImagePreprocessor.preprocessImage(imageBytes);
+    // Preprocess the image in background isolate (much faster for large images)
+    final preprocessed = await ImagePreprocessor.preprocessImageAsync(imageBytes);
 
     // Run inference
-    final embedding = _inference.embedImage(preprocessed);
+    final embedding = await _inference.embedImage(preprocessed);
 
     // L2 normalize the embedding
     return _l2Normalize(embedding);
@@ -80,9 +80,9 @@ class KitakoEmbeddingService {
   /// Generates an embedding for preprocessed image data.
   ///
   /// [preprocessedImage] - Already preprocessed Float32List [1, 224, 224, 3]
-  Float32List embedPreprocessedImage(Float32List preprocessedImage) {
+  Future<Float32List> embedPreprocessedImage(Float32List preprocessedImage) async {
     _ensureImageReady();
-    final embedding = _inference.embedImage(preprocessedImage);
+    final embedding = await _inference.embedImage(preprocessedImage);
     return _l2Normalize(embedding);
   }
 
@@ -91,30 +91,51 @@ class KitakoEmbeddingService {
   /// [text] - Input text to embed
   ///
   /// Returns a normalized 768-dimensional embedding vector.
-  Float32List embedText(String text) {
+  Future<Float32List> embedText(String text) async {
     _ensureTextReady();
 
+    // Format text with prompt template for better CLIP/SigLIP performance
+    // SigLIP works best with descriptive prompts
+    final promptText = _formatPrompt(text);
+
     // Tokenize the text
-    final tokens = _tokenizer.encode(text);
+    final tokens = _tokenizer.encode(promptText);
 
     // Run inference
-    final embedding = _inference.embedText(tokens);
+    final embedding = await _inference.embedText(tokens);
 
     // L2 normalize the embedding
     return _l2Normalize(embedding);
   }
 
+  /// Format text with a prompt template for better cross-modal matching
+  String _formatPrompt(String text) {
+    // If already looks like a sentence/description, use as-is
+    if (text.contains(' ') && text.length > 20) {
+      print('SigLIP prompt (as-is): "$text"');
+      return text;
+    }
+    // For short queries, wrap in a descriptive prompt
+    final prompt = 'a photo of $text';
+    print('SigLIP prompt (formatted): "$prompt"');
+    return prompt;
+  }
+
   /// Generates embeddings for multiple texts (batch).
-  List<Float32List> embedTexts(List<String> texts) {
-    return texts.map(embedText).toList();
+  Future<List<Float32List>> embedTexts(List<String> texts) async {
+    final results = <Float32List>[];
+    for (final text in texts) {
+      results.add(await embedText(text));
+    }
+    return results;
   }
 
   /// Computes similarity between an image and text.
   ///
   /// Returns a score between -1 and 1.
-  double computeSimilarity(Uint8List imageBytes, String text) {
-    final imageEmbedding = embedImage(imageBytes);
-    final textEmbedding = embedText(text);
+  Future<double> computeSimilarity(Uint8List imageBytes, String text) async {
+    final imageEmbedding = await embedImage(imageBytes);
+    final textEmbedding = await embedText(text);
     return SiglipInference.cosineSimilarity(imageEmbedding, textEmbedding);
   }
 
@@ -126,17 +147,17 @@ class KitakoEmbeddingService {
   /// Finds the best matching text for an image from a list of candidates.
   ///
   /// Returns the index of the best match and its similarity score.
-  (int index, double score) findBestTextMatch(
+  Future<(int index, double score)> findBestTextMatch(
     Uint8List imageBytes,
     List<String> candidates,
-  ) {
-    final imageEmbedding = embedImage(imageBytes);
+  ) async {
+    final imageEmbedding = await embedImage(imageBytes);
 
     int bestIndex = -1;
     double bestScore = double.negativeInfinity;
 
     for (int i = 0; i < candidates.length; i++) {
-      final textEmbedding = embedText(candidates[i]);
+      final textEmbedding = await embedText(candidates[i]);
       final score =
           SiglipInference.cosineSimilarity(imageEmbedding, textEmbedding);
 

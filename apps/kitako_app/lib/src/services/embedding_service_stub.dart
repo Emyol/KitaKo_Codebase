@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-/// Stub implementation for web platform where tflite_flutter is not available.
+/// Stub implementation for web platform where ONNX Runtime is not available.
 /// This file is used via conditional imports when running on web.
 /// All methods throw UnsupportedError - the EmbeddingService falls back to mock mode.
 
@@ -22,7 +22,7 @@ class KitakoEmbeddingService {
   }) async {
     throw UnsupportedError(
       'KitakoEmbeddingService is not supported on web platform. '
-      'TFLite requires native binaries which are not available in browsers.',
+      'ONNX Runtime requires native binaries which are not available in browsers.',
     );
   }
 
@@ -36,17 +36,17 @@ class KitakoEmbeddingService {
   }
 
   /// Embed text - throws on web
-  Float32List embedText(String text) {
+  Future<Float32List> embedText(String text) async {
     throw UnsupportedError('Not supported on web');
   }
 
   /// Embed image - throws on web
-  Float32List embedImage(Uint8List imageBytes) {
+  Future<Float32List> embedImage(Uint8List imageBytes) async {
     throw UnsupportedError('Not supported on web');
   }
 
   /// Embed preprocessed image - throws on web
-  Float32List embedPreprocessedImage(Float32List preprocessedImage) {
+  Future<Float32List> embedPreprocessedImage(Float32List preprocessedImage) async {
     throw UnsupportedError('Not supported on web');
   }
 

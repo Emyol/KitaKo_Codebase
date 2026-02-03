@@ -45,5 +45,10 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Photo Library Permissions -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>KitaKo needs access to your photos to enable image search and organization features.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>KitaKo needs access to save photos to your library.</string>
 </dict>
 </plist>

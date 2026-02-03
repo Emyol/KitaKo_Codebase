@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
 /// Image preprocessor for SigLIP model.
@@ -21,6 +20,9 @@ class ImagePreprocessor {
   ///
   /// Returns a Float32List of shape [1, 224, 224, 3] with values
   /// normalized to [-1, 1] using mean=0.5 and std=0.5.
+  ///
+  /// NOTE: This uses pure Dart and can be slow for large images.
+  /// Use [preprocessImageAsync] for better performance on large images.
   static Float32List preprocessImage(Uint8List imageBytes) {
     // Decode the image
     final image = img.decodeImage(imageBytes);
@@ -31,11 +33,83 @@ class ImagePreprocessor {
     return preprocessDecodedImage(image);
   }
 
+  /// Preprocesses an image asynchronously in a background isolate.
+  ///
+  /// This is significantly faster for large images as it doesn't block
+  /// the main thread and can utilize background processing.
+  static Future<Float32List> preprocessImageAsync(Uint8List imageBytes) async {
+    return compute(_preprocessInIsolate, imageBytes);
+  }
+
+  /// Internal function that runs in isolate
+  static Float32List _preprocessInIsolate(Uint8List imageBytes) {
+    final image = img.decodeImage(imageBytes);
+    if (image == null) {
+      throw ArgumentError('Could not decode image');
+    }
+    return _preprocessDecodedImageFast(image);
+  }
+
+  /// Fast preprocessing - decodes at reduced size if possible
+  static Float32List _preprocessDecodedImageFast(img.Image image) {
+    // If image is much larger than target, use nearest neighbor for speed
+    // then do a final bilinear pass at small size
+    img.Image resized;
+
+    if (image.width > targetSize * 4 || image.height > targetSize * 4) {
+      // First pass: quick resize to 2x target using nearest neighbor
+      final intermediateSize = targetSize * 2;
+      final intermediate = img.copyResize(
+        image,
+        width: intermediateSize,
+        height: intermediateSize,
+        interpolation: img.Interpolation.nearest,
+      );
+      // Second pass: bilinear to final size
+      resized = img.copyResize(
+        intermediate,
+        width: targetSize,
+        height: targetSize,
+        interpolation: img.Interpolation.linear,
+      );
+    } else {
+      // Image is small enough for direct bilinear resize
+      resized = img.copyResize(
+        image,
+        width: targetSize,
+        height: targetSize,
+        interpolation: img.Interpolation.linear,
+      );
+    }
+
+    // Convert to normalized float array in NCHW format [1, 3, 224, 224]
+    // (batch, channels, height, width) - required by ONNX SigLIP model
+    final Float32List result = Float32List(1 * 3 * targetSize * targetSize);
+    final int channelSize = targetSize * targetSize;
+
+    for (int y = 0; y < targetSize; y++) {
+      for (int x = 0; x < targetSize; x++) {
+        final pixel = resized.getPixel(x, y);
+        final r = pixel.r.toDouble();
+        final g = pixel.g.toDouble();
+        final b = pixel.b.toDouble();
+
+        final pixelIdx = y * targetSize + x;
+        // Channel-first layout: R plane, then G plane, then B plane
+        result[0 * channelSize + pixelIdx] = (r * rescaleFactor - imageMean) / imageStd;
+        result[1 * channelSize + pixelIdx] = (g * rescaleFactor - imageMean) / imageStd;
+        result[2 * channelSize + pixelIdx] = (b * rescaleFactor - imageMean) / imageStd;
+      }
+    }
+
+    return result;
+  }
+
   /// Preprocesses an already-decoded image.
   ///
   /// [image] - Decoded image object
   ///
-  /// Returns a Float32List ready for model input.
+  /// Returns a Float32List ready for model input in NCHW format [1, 3, 224, 224].
   static Float32List preprocessDecodedImage(img.Image image) {
     // Resize to 224x224 using bilinear interpolation (resample=2 in config)
     final resized = img.copyResize(
@@ -45,9 +119,10 @@ class ImagePreprocessor {
       interpolation: img.Interpolation.linear,
     );
 
-    // Convert to RGB if necessary and normalize
-    final Float32List result = Float32List(1 * targetSize * targetSize * 3);
-    int idx = 0;
+    // Convert to RGB if necessary and normalize in NCHW format
+    // (batch, channels, height, width) - required by ONNX SigLIP model
+    final Float32List result = Float32List(1 * 3 * targetSize * targetSize);
+    final int channelSize = targetSize * targetSize;
 
     for (int y = 0; y < targetSize; y++) {
       for (int x = 0; x < targetSize; x++) {
@@ -62,9 +137,11 @@ class ImagePreprocessor {
         // 1. Rescale: value * (1/255) -> [0, 1]
         // 2. Normalize: (value - mean) / std -> with mean=0.5, std=0.5: [0,1] -> [-1, 1]
         // Combined: ((value / 255) - 0.5) / 0.5 = (value / 255 - 0.5) * 2 = value / 127.5 - 1
-        result[idx++] = (r * rescaleFactor - imageMean) / imageStd;
-        result[idx++] = (g * rescaleFactor - imageMean) / imageStd;
-        result[idx++] = (b * rescaleFactor - imageMean) / imageStd;
+        final pixelIdx = y * targetSize + x;
+        // Channel-first layout: R plane, then G plane, then B plane
+        result[0 * channelSize + pixelIdx] = (r * rescaleFactor - imageMean) / imageStd;
+        result[1 * channelSize + pixelIdx] = (g * rescaleFactor - imageMean) / imageStd;
+        result[2 * channelSize + pixelIdx] = (b * rescaleFactor - imageMean) / imageStd;
       }
     }
 
@@ -96,9 +173,9 @@ class ImagePreprocessor {
 
   /// Creates a placeholder/test image for validation.
   ///
-  /// Returns a preprocessed 224x224 gray image.
+  /// Returns a preprocessed 224x224 gray image in NCHW format [1, 3, 224, 224].
   static Float32List createTestImage() {
-    final Float32List result = Float32List(1 * targetSize * targetSize * 3);
+    final Float32List result = Float32List(1 * 3 * targetSize * targetSize);
 
     // Fill with gray (0.0 after normalization)
     for (int i = 0; i < result.length; i++) {
