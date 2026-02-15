@@ -4,7 +4,7 @@ import 'src/ui/screens/startup_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/services/image_search_service.dart';
 import 'src/services/model_download_service.dart';
-import 'src/widgets/model_download_gate.dart';
+import 'src/ui/widgets/model_download_gate.dart';
 
 /// KitaKo - Image Retrieval Mobile Application
 /// Platform: Android & iOS

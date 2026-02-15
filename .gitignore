@@ -47,13 +47,10 @@ dataset/images/
 # App-specific large assets
 apps/kitako_app/assets/models/*.onnx
 apps/kitako_app/assets/model/**/*.tflite
-apps/kitako_app/assets/index/
 
-# Python virtual environment
+# Python virtual environments
 .venv/
-
-# Windows reserved filename
-nul
+**/venv/
 
 # Large ONNX model folders in tools
 tools/onnx_models_complete/
@@ -63,3 +60,21 @@ tools/xenova_models/
 
 # Test images
 assets/test_images/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Jupyter notebooks (large, contain embedded outputs)
+*.ipynb
+
+# Blobs (app binary cache)
+apps/kitako_app/blobs/
+
+# Large tokenizer files (>10MB)
+apps/kitako_app/assets/model/merged_epoch8_step6024/tokenizer.json
+
+# Windows reserved filename artifact
+nul
+
+# Claude AI config (personal)
+.claude/

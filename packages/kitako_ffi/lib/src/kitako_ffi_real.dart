@@ -114,6 +114,42 @@ typedef _DartAnnSave = int Function(
   ffi.Pointer<Utf8> indexPath,
 );
 
+// Metrics API
+typedef _NativeAnnGetDistanceComputations = ffi.Int64 Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+typedef _DartAnnGetDistanceComputations = int Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+
+typedef _NativeAnnGetHops = ffi.Int64 Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+typedef _DartAnnGetHops = int Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+
+typedef _NativeAnnResetMetrics = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+typedef _DartAnnResetMetrics = int Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+
+typedef _NativeAnnGetEf = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+typedef _DartAnnGetEf = int Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+
+typedef _NativeAnnGetMaxLevel = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+typedef _DartAnnGetMaxLevel = int Function(
+  ffi.Pointer<ffi.Void> handle,
+);
+
 // ============================================================================
 // Space Types (matching C enum)
 // ============================================================================
@@ -196,6 +232,13 @@ class KitakoFfi {
   _DartAnnInitIndex? _annInitIndex;
   _DartAnnAddItem? _annAddItem;
   _DartAnnSave? _annSave;
+
+  // Metrics functions
+  _DartAnnGetDistanceComputations? _annGetDistanceComputations;
+  _DartAnnGetHops? _annGetHops;
+  _DartAnnResetMetrics? _annResetMetrics;
+  _DartAnnGetEf? _annGetEf;
+  _DartAnnGetMaxLevel? _annGetMaxLevel;
 
   /// Whether ANN functions are available (hnswlib compiled in native library)
   bool get isAnnAvailable => _annCreate != null;
@@ -289,6 +332,27 @@ class KitakoFfi {
       _annSave = _lib
           .lookup<ffi.NativeFunction<_NativeAnnSave>>('kitako_ann_save')
           .asFunction();
+
+      // Metrics API
+      _annGetDistanceComputations = _lib
+          .lookup<ffi.NativeFunction<_NativeAnnGetDistanceComputations>>('kitako_ann_get_distance_computations')
+          .asFunction();
+
+      _annGetHops = _lib
+          .lookup<ffi.NativeFunction<_NativeAnnGetHops>>('kitako_ann_get_hops')
+          .asFunction();
+
+      _annResetMetrics = _lib
+          .lookup<ffi.NativeFunction<_NativeAnnResetMetrics>>('kitako_ann_reset_metrics')
+          .asFunction();
+
+      _annGetEf = _lib
+          .lookup<ffi.NativeFunction<_NativeAnnGetEf>>('kitako_ann_get_ef')
+          .asFunction();
+
+      _annGetMaxLevel = _lib
+          .lookup<ffi.NativeFunction<_NativeAnnGetMaxLevel>>('kitako_ann_get_max_level')
+          .asFunction();
     } catch (e) {
       // ANN functions not available - hnswlib not compiled
       // This is OK for basic FFI testing
@@ -303,6 +367,11 @@ class KitakoFfi {
       _annInitIndex = null;
       _annAddItem = null;
       _annSave = null;
+      _annGetDistanceComputations = null;
+      _annGetHops = null;
+      _annResetMetrics = null;
+      _annGetEf = null;
+      _annGetMaxLevel = null;
     }
   }
 
@@ -510,6 +579,50 @@ class KitakoFfi {
     } finally {
       calloc.free(pathPtr);
     }
+  }
+
+  // ==========================================================================
+  // Metrics API
+  // ==========================================================================
+
+  /// Gets the number of distance computations performed in the last search.
+  ///
+  /// Compare this against the total index size to verify HNSW is doing
+  /// approximate search. HNSW should compute far fewer distances than
+  /// the total number of vectors (brute force).
+  int annGetDistanceComputations(ffi.Pointer<ffi.Void> handle) {
+    _checkAnnAvailable();
+    if (_annGetDistanceComputations == null) return -1;
+    return _annGetDistanceComputations!(handle);
+  }
+
+  /// Gets the number of graph hops in the last search.
+  int annGetHops(ffi.Pointer<ffi.Void> handle) {
+    _checkAnnAvailable();
+    if (_annGetHops == null) return -1;
+    return _annGetHops!(handle);
+  }
+
+  /// Resets distance computation and hop counters to zero.
+  /// Call before search to get per-search metrics.
+  void annResetMetrics(ffi.Pointer<ffi.Void> handle) {
+    _checkAnnAvailable();
+    if (_annResetMetrics == null) return;
+    _annResetMetrics!(handle);
+  }
+
+  /// Gets the current ef (search) parameter value.
+  int annGetEf(ffi.Pointer<ffi.Void> handle) {
+    _checkAnnAvailable();
+    if (_annGetEf == null) return -1;
+    return _annGetEf!(handle);
+  }
+
+  /// Gets the maximum level (number of layers) in the HNSW graph.
+  int annGetMaxLevel(ffi.Pointer<ffi.Void> handle) {
+    _checkAnnAvailable();
+    if (_annGetMaxLevel == null) return -1;
+    return _annGetMaxLevel!(handle);
   }
 }
 

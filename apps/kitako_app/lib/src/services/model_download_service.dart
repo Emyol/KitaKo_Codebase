@@ -41,7 +41,7 @@ class ModelDownloadService {
   /// NOTE: Using older *_quantized.onnx models (not *_int8.onnx) for SigLIP-1 because:
   /// - int8 models use ConvInteger(10) which isn't supported by ONNX Runtime Mobile
   /// - The older quantized models use compatible dynamic quantization
-  static const int modelVersion = 5; // Added SigLIP-1 aligned models
+  static const int modelVersion = 6; // Added fine-tuned SigLIP model
 
   static const Map<String, ModelInfo> models = {
     // SigLIP-1 ALIGNED (RECOMMENDED - correctly aligned embeddings)
@@ -89,6 +89,22 @@ class ModelDownloadService {
       description: 'SigLIP-2 Text Encoder (FP32, 256K vocab, with projection)',
       modelType: ModelType.siglip2Fp32,
       requiresManualSetup: true, // Too large for auto-download from HF
+    ),
+
+    // Fine-tuned SigLIP (merged_epoch8_step6024) - trained on KitaKo Taglish data
+    'finetuned_vision': ModelInfo(
+      filename: 'finetuned_vision_model_fp32.onnx',
+      expectedSizeBytes: 371781840, // ~354 MB
+      description: 'Fine-tuned SigLIP Vision Encoder (FP32, 224x224, Taglish)',
+      modelType: ModelType.finetunedSiglip,
+      requiresManualSetup: true,
+    ),
+    'finetuned_text': ModelInfo(
+      filename: 'finetuned_text_model_fp32.onnx',
+      expectedSizeBytes: 1129424626, // ~1077 MB
+      description: 'Fine-tuned SigLIP Text Encoder (FP32, 256K vocab, Taglish)',
+      modelType: ModelType.finetunedSiglip,
+      requiresManualSetup: true,
     ),
   };
 
@@ -384,6 +400,7 @@ enum ModelType {
   siglip1Quantized,  // Quantized SigLIP-1 (~210MB total) - LEGACY, misaligned
   siglip1Aligned,    // Full precision SigLIP-1 with aligned embeddings (~775MB total) - RECOMMENDED
   siglip2Fp32,       // Full precision SigLIP-2 (~1.5GB total)
+  finetunedSiglip,   // Fine-tuned SigLIP (~1.4GB total) - trained on Taglish
 }
 
 /// Information about a downloadable model
