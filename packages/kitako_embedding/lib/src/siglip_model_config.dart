@@ -10,6 +10,12 @@ enum SiglipModelVersion {
   /// - Improved multilingual support
   /// - Better semantic understanding
   siglip2,
+
+  /// Fine-tuned SigLIP (merged_epoch8_step6024)
+  /// - Vocabulary: ~256k tokens (SentencePiece)
+  /// - Fine-tuned on KitaKo Taglish dataset
+  /// - 224x224 image input
+  finetunedSiglip,
 }
 
 /// Configuration for a specific SigLIP model version
@@ -105,6 +111,23 @@ class SiglipModelConfig {
     imageStd: [0.5, 0.5, 0.5],
   );
 
+  /// Configuration for fine-tuned SigLIP (merged_epoch8_step6024)
+  /// Based on SigLIP architecture with 256K vocab, 224x224 images
+  /// Fine-tuned on KitaKo Taglish dataset for improved Taglish understanding
+  static const finetunedSiglipConfig = SiglipModelConfig(
+    version: SiglipModelVersion.finetunedSiglip,
+    vocabularySize: 256000,
+    imageSize: 224,
+    imageChannels: 3,
+    maxTextLength: 64,
+    embeddingDimension: 768,
+    visionOutputTensorName: 'image_features',
+    textOutputTensorName: 'text_features',
+    hasProjectionLayer: true,
+    imageMean: [0.5, 0.5, 0.5],
+    imageStd: [0.5, 0.5, 0.5],
+  );
+
   /// Get configuration for a specific model version
   static SiglipModelConfig forVersion(SiglipModelVersion version) {
     switch (version) {
@@ -112,6 +135,8 @@ class SiglipModelConfig {
         return siglip1Config;
       case SiglipModelVersion.siglip2:
         return siglip2Config;
+      case SiglipModelVersion.finetunedSiglip:
+        return finetunedSiglipConfig;
     }
   }
 

@@ -80,6 +80,9 @@ class EmbeddingService {
   /// Asset path for SigLIP-2 tokenizer (256K vocabulary)
   static const String _siglip2TokenizerAsset = 'assets/models/tokenizer/tokenizer.json';
 
+  /// Asset path for fine-tuned SigLIP tokenizer (256K vocabulary, from model folder)
+  static const String _finetunedTokenizerAsset = 'assets/model/merged_epoch8_step6024/tokenizer.json';
+
   /// Whether the service is initialized
   bool get isInitialized => _isInitialized;
 
@@ -119,18 +122,26 @@ class EmbeddingService {
   /// Initialize the embedding service
   ///
   /// Tries to load models in order:
-  /// 1. SigLIP-1 ALIGNED (BEST - correctly aligned embeddings)
-  /// 2. SigLIP-2 (downloaded)
-  /// 3. SigLIP-2 (assets)
-  /// 4. SigLIP-1 quantized (legacy)
-  /// 5. TFLite
-  /// 6. Mock
+  /// 1. Fine-tuned SigLIP (BEST - trained on Taglish)
+  /// 2. SigLIP-1 ALIGNED (correctly aligned embeddings)
+  /// 3. SigLIP-2 (downloaded)
+  /// 4. SigLIP-2 (assets)
+  /// 5. SigLIP-1 quantized (legacy)
+  /// 6. TFLite
+  /// 7. Mock
   ///
   /// Returns `true` if initialization was successful
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
-    // 🔥 Try SigLIP-1 ALIGNED first (BEST - correctly aligned embeddings)
+    // 🔥 Try fine-tuned SigLIP first (BEST - trained on Taglish data)
+    debugPrint('EmbeddingService: Checking for fine-tuned SigLIP models...');
+    if (await _tryInitializeFinetunedSiglip()) {
+      debugPrint('EmbeddingService: ✅ Using FINE-TUNED SigLIP (224x224, Taglish-trained)');
+      return true;
+    }
+
+    // 🔥 Try SigLIP-1 ALIGNED (BEST - correctly aligned embeddings)
     debugPrint('EmbeddingService: Checking for SigLIP-1 ALIGNED models...');
     if (await _tryInitializeSiglip1Aligned()) {
       debugPrint('EmbeddingService: ✅ Using SigLIP-1 ALIGNED (224x224, correctly aligned embeddings)');
@@ -217,6 +228,56 @@ class EmbeddingService {
       return true;
     } catch (e, stack) {
       debugPrint('EmbeddingService: Failed to initialize SigLIP-1 ALIGNED: $e');
+      debugPrint('Stack: $stack');
+      _onnxClient?.dispose();
+      _onnxClient = null;
+      return false;
+    }
+  }
+
+  /// Try to initialize with fine-tuned SigLIP models (BEST for Taglish)
+  /// These models have been fine-tuned on KitaKo Taglish dataset
+  Future<bool> _tryInitializeFinetunedSiglip() async {
+    try {
+      // Check if fine-tuned models are available
+      final visionReady = await _downloadService.isModelAvailable('finetuned_vision');
+      final textReady = await _downloadService.isModelAvailable('finetuned_text');
+
+      if (!visionReady || !textReady) {
+        debugPrint('EmbeddingService: Fine-tuned SigLIP models not available (vision: $visionReady, text: $textReady)');
+        return false;
+      }
+
+      final visionPath = await _downloadService.getModelPath('finetuned_vision');
+      final textPath = await _downloadService.getModelPath('finetuned_text');
+
+      debugPrint('EmbeddingService: Loading FINE-TUNED SigLIP from:');
+      debugPrint('  Vision: $visionPath');
+      debugPrint('  Text: $textPath');
+
+      _onnxClient = OnnxEmbeddingService();
+      await _onnxClient!.initialize(
+        visionModelPath: visionPath,
+        textModelPath: textPath,
+        tokenizerPath: _finetunedTokenizerAsset,
+        modelVersion: SiglipModelVersion.finetunedSiglip,
+      );
+
+      _activeBackend = EmbeddingBackend.onnx;
+      _modelVersion = SiglipModelVersion.finetunedSiglip;
+      _isInitialized = true;
+
+      debugPrint('EmbeddingService: Fine-tuned SigLIP initialized successfully');
+      debugPrint('  - Vision encoder ready: ${_onnxClient!.isImageEncoderReady}');
+      debugPrint('  - Text encoder ready: ${_onnxClient!.isTextEncoderReady}');
+      debugPrint('  - Model config: ${_onnxClient!.modelConfig}');
+
+      // Clear embedding cache when switching models
+      _embeddingCache.clear();
+
+      return true;
+    } catch (e, stack) {
+      debugPrint('EmbeddingService: Failed to initialize fine-tuned SigLIP: $e');
       debugPrint('Stack: $stack');
       _onnxClient?.dispose();
       _onnxClient = null;
@@ -423,6 +484,11 @@ class EmbeddingService {
       case SiglipModelVersion.siglip2:
         // Use SigLIP-2 from assets
         return await initializeWithSiglip2();
+
+      case SiglipModelVersion.finetunedSiglip:
+        // Use fine-tuned SigLIP from /data/local/tmp/ or app documents
+        await _downloadService.copyModelsFromTmp();
+        return await _tryInitializeFinetunedSiglip();
     }
   }
 

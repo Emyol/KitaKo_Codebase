@@ -67,6 +67,9 @@ class IvfPqAnnIndex extends AnnIndex with AnnIndexValidation {
   /// Whether the index has been trained
   bool get isTrained => _isTrained;
 
+  /// Get the current IVF-PQ configuration
+  IvfPqConfig get config => _config;
+
   /// Trains the index on representative data
   /// 
   /// This must be called before adding vectors. The training data should be
@@ -173,6 +176,53 @@ class IvfPqAnnIndex extends AnnIndex with AnnIndexValidation {
         distance: r.$2,
       );
     }).toList();
+  }
+
+  /// Search with diagnostic metrics and optional numProbes override
+  ///
+  /// Returns results plus detailed search metrics for optimization.
+  /// [numProbes] overrides the config's numProbes for this search only.
+  Future<({
+    List<AnnSearchResult> results,
+    int clustersProbed,
+    int distanceComputations,
+    int totalCandidates,
+    int numProbesUsed,
+  })> searchWithMetrics(
+    Float32List query,
+    int k, {
+    int? numProbes,
+  }) async {
+    if (!isReady) {
+      throw AnnIndexException('Index not loaded or trained');
+    }
+
+    validateQuery(query);
+    validateK(k);
+
+    final effectiveProbes = numProbes ?? _config.numProbes;
+
+    final metrics = _ivf!.searchWithMetrics(
+      query,
+      k: k,
+      nprobe: effectiveProbes,
+    );
+
+    final results = metrics.results.map((r) {
+      final externalId = _idMapping[r.$1] ?? r.$1;
+      return AnnSearchResult(
+        id: externalId,
+        distance: r.$2,
+      );
+    }).toList();
+
+    return (
+      results: results,
+      clustersProbed: metrics.clustersProbed,
+      distanceComputations: metrics.distanceComputations,
+      totalCandidates: metrics.totalCandidatesInProbedClusters,
+      numProbesUsed: effectiveProbes,
+    );
   }
 
   @override

@@ -458,4 +458,87 @@ KITAKO_ANN_EXPORT int32_t kitako_ann_save(KitakoAnnHandle handle, const char* in
     }
 }
 
+// ============================================================================
+// Metrics API
+// ============================================================================
+
+KITAKO_ANN_EXPORT int64_t kitako_ann_get_distance_computations(KitakoAnnHandle handle) {
+    if (!handle) {
+        return -1;
+    }
+    
+    auto* index = static_cast<KitakoAnnIndex*>(handle);
+    std::lock_guard<std::mutex> lock(index->mtx);
+    
+    if (!index->is_loaded || !index->hnsw) {
+        return -1;
+    }
+    
+    return static_cast<int64_t>(index->hnsw->metric_distance_computations.load());
+}
+
+KITAKO_ANN_EXPORT int64_t kitako_ann_get_hops(KitakoAnnHandle handle) {
+    if (!handle) {
+        return -1;
+    }
+    
+    auto* index = static_cast<KitakoAnnIndex*>(handle);
+    std::lock_guard<std::mutex> lock(index->mtx);
+    
+    if (!index->is_loaded || !index->hnsw) {
+        return -1;
+    }
+    
+    return static_cast<int64_t>(index->hnsw->metric_hops.load());
+}
+
+KITAKO_ANN_EXPORT int32_t kitako_ann_reset_metrics(KitakoAnnHandle handle) {
+    if (!handle) {
+        set_error("Null handle");
+        return KITAKO_ANN_ERR_NULL_HANDLE;
+    }
+    
+    auto* index = static_cast<KitakoAnnIndex*>(handle);
+    std::lock_guard<std::mutex> lock(index->mtx);
+    
+    if (!index->is_loaded || !index->hnsw) {
+        set_error("Index not loaded");
+        return KITAKO_ANN_ERR_NOT_LOADED;
+    }
+    
+    index->hnsw->metric_distance_computations = 0;
+    index->hnsw->metric_hops = 0;
+    return KITAKO_ANN_OK;
+}
+
+KITAKO_ANN_EXPORT int32_t kitako_ann_get_ef(KitakoAnnHandle handle) {
+    if (!handle) {
+        return -1;
+    }
+    
+    auto* index = static_cast<KitakoAnnIndex*>(handle);
+    std::lock_guard<std::mutex> lock(index->mtx);
+    
+    if (!index->is_loaded || !index->hnsw) {
+        return -1;
+    }
+    
+    return static_cast<int32_t>(index->hnsw->ef_);
+}
+
+KITAKO_ANN_EXPORT int32_t kitako_ann_get_max_level(KitakoAnnHandle handle) {
+    if (!handle) {
+        return -1;
+    }
+    
+    auto* index = static_cast<KitakoAnnIndex*>(handle);
+    std::lock_guard<std::mutex> lock(index->mtx);
+    
+    if (!index->is_loaded || !index->hnsw) {
+        return -1;
+    }
+    
+    return static_cast<int32_t>(index->hnsw->maxlevel_);
+}
+
 } // extern "C"

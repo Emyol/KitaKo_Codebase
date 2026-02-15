@@ -58,34 +58,35 @@ class ANNSearchService {
   /// Set to -1.0 to return ALL results regardless of similarity for debugging.
   static const double similarityThreshold = -1.0;
 
-  /// Minimum vectors required for training (need enough for clustering)
-  /// Must be >= numCentroidsPerSubquantizer (512) for stable training
-  /// With 64 subquantizers × 512 centroids, we need substantial data
-  static const int minVectorsForTraining = 600;
+  /// Minimum vectors required for training
+  /// Must be >= max(numClusters, numCentroidsPerSubquantizer) for stable training
+  int get minVectorsForTraining => _currentConfig.numCentroidsPerSubquantizer + 50;
 
-  /// IVF-PQ Configuration for SigLIP-768
-  /// Optimized for 1000+ images with MAXIMUM accuracy
-  ///
-  /// Ultra-high accuracy configuration:
-  /// - numClusters: 16 (fewer clusters = less quantization at cluster level)
-  /// - numProbes: 16 = search ALL clusters (100%) for perfect recall
-  /// - numSubquantizers: 64 (768 / 64 = 12 dims per subquantizer, minimal quantization)
-  /// - numCentroidsPerSubquantizer: 512 = 9-bit quantization (higher precision)
-  /// - trainingIterations: 50 = extensive training for optimal codebooks
-  ///
-  /// This configuration prioritizes accuracy over speed:
-  /// - Fewer clusters with more probes = less cluster-level approximation
-  /// - More subquantizers = finer-grained vector decomposition
-  /// - Higher centroids = more precise quantization per subquantizer
-  /// - More training = better converged codebooks
-  static ann.IvfPqConfig get _config => ann.IvfPqConfig(
+  /// Current IVF-PQ Configuration (mutable for tuning)
+  /// Fine-tuned defaults for SigLIP-768 with ~1000 images
+  ann.IvfPqConfig _currentConfig = ann.IvfPqConfig(
     dimension: 768,
-    numClusters: 16,  // Fewer clusters for less coarse approximation
-    numSubquantizers: 64,  // 768 / 64 = 12 dims per subquantizer (finer quantization)
-    numCentroidsPerSubquantizer: 512,  // 9-bit = higher precision per subquantizer
-    numProbes: 16,  // Search ALL 16 clusters (100% recall at cluster level)
-    trainingIterations: 50,  // Extensive training for optimal convergence
+    numClusters: 32,              // sqrt(1000) ≈ 32, good for 500-2000 images
+    numSubquantizers: 48,          // 768 / 48 = 16 dims per subquantizer (good balance)
+    numCentroidsPerSubquantizer: 256, // uint8 max, standard PQ codebook size
+    numProbes: 8,                  // search 25% of clusters (8/32)
+    trainingIterations: 25,
   );
+
+  /// Runtime-adjustable numProbes (no retrain needed)
+  int _numProbes = 8;
+
+  /// Get the current IVF-PQ configuration
+  ann.IvfPqConfig get currentConfig => _currentConfig;
+
+  /// Get the current numProbes value
+  int get currentNumProbes => _numProbes;
+
+  /// Set number of probes for search (no retrain needed)
+  void setNumProbes(int probes) {
+    _numProbes = probes.clamp(1, _currentConfig.numClusters);
+    debugPrint('ANNSearchService: numProbes set to $_numProbes');
+  }
 
   /// Threshold for using brute-force instead of IVF-PQ
   /// IVF-PQ is now configured for high accuracy (searching all clusters)
@@ -104,7 +105,7 @@ class ANNSearchService {
     try {
       debugPrint('ANNSearchService: Initializing with pure Dart IVF-PQ...');
 
-      _ivfpqIndex = ann.IvfPqAnnIndex(config: _config);
+      _ivfpqIndex = ann.IvfPqAnnIndex(config: _currentConfig);
 
       _isInitialized = true;
       debugPrint('ANNSearchService: Initialized (awaiting training data)');
@@ -386,9 +387,14 @@ class ANNSearchService {
 
     // Recreate index
     _ivfpqIndex?.dispose();
-    _ivfpqIndex = ann.IvfPqAnnIndex(config: _config);
+    _ivfpqIndex = ann.IvfPqAnnIndex(config: _currentConfig);
 
     debugPrint('ANNSearchService: Index cleared');
+  }
+
+  /// Get all stored embeddings (for building external indices like HNSW)
+  Map<String, Float32List> getAllEmbeddings() {
+    return Map.unmodifiable(_imageEmbeddings);
   }
 
   /// Get index statistics
@@ -414,6 +420,134 @@ class ANNSearchService {
     clearIndex();
     _isInitialized = false;
     debugPrint('ANNSearchService: Disposed');
+  }
+
+  // ========== IVF-PQ Tuning & Retraining ==========
+
+  /// Retrain the IVF-PQ index with a new configuration
+  ///
+  /// This disposes the old index, creates a new one with the given config,
+  /// and retrains using all stored embeddings. Returns true on success.
+  Future<bool> retrainWithConfig(ann.IvfPqConfig config) async {
+    try {
+      config.validate();
+      _currentConfig = config;
+      _numProbes = config.numProbes;
+
+      // Dispose old index
+      _ivfpqIndex?.dispose();
+      _isTrained = false;
+
+      // Create new index
+      _ivfpqIndex = ann.IvfPqAnnIndex(config: config);
+
+      if (_imageEmbeddings.length < minVectorsForTraining) {
+        debugPrint(
+          'ANNSearchService: Not enough vectors for training: '
+          '${_imageEmbeddings.length} < $minVectorsForTraining',
+        );
+        return false;
+      }
+
+      debugPrint('ANNSearchService: Retraining IVF-PQ with config:');
+      debugPrint('  numClusters: ${config.numClusters}');
+      debugPrint('  numSubquantizers: ${config.numSubquantizers}');
+      debugPrint('  numCentroidsPerSubquantizer: ${config.numCentroidsPerSubquantizer}');
+      debugPrint('  numProbes: ${config.numProbes}');
+      debugPrint('  trainingIterations: ${config.trainingIterations}');
+
+      final stopwatch = Stopwatch()..start();
+
+      // Prepare training data from all stored embeddings
+      final allEmbeddings = _imageEmbeddings.values.toList();
+      final allImageIds = _imageEmbeddings.keys.toList();
+
+      // Reset ID mappings
+      _indexIdToImageId.clear();
+      _imageIdToIndexId.clear();
+      _nextIndexId = 0;
+
+      for (final imageId in allImageIds) {
+        _imageIdToIndexId[imageId] = _nextIndexId;
+        _indexIdToImageId[_nextIndexId] = imageId;
+        _nextIndexId++;
+      }
+
+      // Train
+      await _ivfpqIndex!.train(allEmbeddings);
+
+      // Add all vectors
+      final indexIds = allImageIds.map((id) => _imageIdToIndexId[id]!).toList();
+      await _ivfpqIndex!.addVectors(allEmbeddings, indexIds);
+
+      _isTrained = true;
+      _pendingEmbeddings.clear();
+      _pendingImages.clear();
+
+      stopwatch.stop();
+      debugPrint(
+        'ANNSearchService: Retrained in ${stopwatch.elapsedMilliseconds}ms '
+        '(${_ivfpqIndex!.size} vectors)',
+      );
+
+      final stats = _ivfpqIndex!.getStatistics();
+      debugPrint('ANNSearchService: IVF-PQ stats: $stats');
+
+      return true;
+    } catch (e) {
+      debugPrint('ANNSearchService: Retrain failed: $e');
+      return false;
+    }
+  }
+
+  /// Search with IVF-PQ metrics for optimization analysis
+  ///
+  /// Returns search results plus diagnostic metrics about how the search
+  /// traversed the index structure. [numProbes] overrides the default.
+  Future<({
+    List<SearchResultWithScore> results,
+    int clustersProbed,
+    int distanceComputations,
+    int totalCandidates,
+    int numProbesUsed,
+    int totalVectors,
+  })?> searchWithIvfPqMetrics(
+    List<double> queryEmbedding, {
+    int k = defaultTopK,
+    int? numProbes,
+  }) async {
+    if (!isReady || _ivfpqIndex == null) return null;
+
+    final float32Query = Float32List.fromList(queryEmbedding);
+    final effectiveProbes = numProbes ?? _numProbes;
+
+    final metrics = await _ivfpqIndex!.searchWithMetrics(
+      float32Query,
+      k,
+      numProbes: effectiveProbes,
+    );
+
+    final results = <SearchResultWithScore>[];
+    for (final result in metrics.results) {
+      final imageId = _indexIdToImageId[result.id];
+      if (imageId == null) continue;
+      final image = _imageMetadata[imageId];
+      if (image == null) continue;
+
+      // IVF-PQ returns sum-of-squared-L2-residual ≈ ||q-v||²
+      // For normalized vectors: cos_sim = 1 - ||q-v||² / 2
+      final similarity = 1.0 - (result.distance / 2.0);
+      results.add(SearchResultWithScore(image: image, similarity: similarity));
+    }
+
+    return (
+      results: results,
+      clustersProbed: metrics.clustersProbed,
+      distanceComputations: metrics.distanceComputations,
+      totalCandidates: metrics.totalCandidates,
+      numProbesUsed: metrics.numProbesUsed,
+      totalVectors: _ivfpqIndex!.size,
+    );
   }
 
   // ========== Alpha Testing Support ==========
@@ -522,9 +656,10 @@ class ANNSearchService {
       final image = _imageMetadata[imageId];
       if (image == null) continue;
 
-      // Convert distance to similarity (IVF-PQ uses L2 distance internally)
-      // For normalized vectors: similarity ≈ 1 - distance^2 / 2
-      final similarity = 1.0 - (result.distance * result.distance) / 2.0;
+      // Convert distance to similarity
+      // IVF-PQ returns sum-of-squared-L2-residual distances ≈ ||q-v||²
+      // For normalized vectors: cos_sim = 1 - ||q-v||² / 2
+      final similarity = 1.0 - (result.distance / 2.0);
       
       if (threshold < 0 || similarity >= threshold) {
         results.add(SearchResultWithScore(image: image, similarity: similarity));

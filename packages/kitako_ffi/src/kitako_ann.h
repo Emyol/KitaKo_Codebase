@@ -188,6 +188,56 @@ KITAKO_ANN_EXPORT int32_t kitako_ann_add_item(
  */
 KITAKO_ANN_EXPORT int32_t kitako_ann_save(KitakoAnnHandle handle, const char* index_path);
 
+// ============================================================================
+// Metrics API (for diagnosing HNSW vs brute force behavior)
+// ============================================================================
+
+/**
+ * Gets the number of distance computations performed in the last search.
+ *
+ * Compare this against the total index size to verify HNSW is doing
+ * approximate (not brute-force) search.
+ * - HNSW: distance_computations << index_size (typically ef * avg_degree)
+ * - Brute force: distance_computations == index_size
+ *
+ * @param handle The index handle
+ * @return       Number of distance computations, or -1 on error
+ */
+KITAKO_ANN_EXPORT int64_t kitako_ann_get_distance_computations(KitakoAnnHandle handle);
+
+/**
+ * Gets the number of hops (graph traversals) in the last search.
+ *
+ * @param handle The index handle
+ * @return       Number of hops, or -1 on error
+ */
+KITAKO_ANN_EXPORT int64_t kitako_ann_get_hops(KitakoAnnHandle handle);
+
+/**
+ * Resets the internal metric counters to zero.
+ * Call this before a search to get accurate per-search metrics.
+ *
+ * @param handle The index handle
+ * @return       Error code (0 = success)
+ */
+KITAKO_ANN_EXPORT int32_t kitako_ann_reset_metrics(KitakoAnnHandle handle);
+
+/**
+ * Gets the current ef (search) parameter value.
+ *
+ * @param handle The index handle
+ * @return       Current ef value, or -1 on error
+ */
+KITAKO_ANN_EXPORT int32_t kitako_ann_get_ef(KitakoAnnHandle handle);
+
+/**
+ * Gets the maximum level (number of layers) in the HNSW graph.
+ *
+ * @param handle The index handle
+ * @return       Max level, or -1 on error
+ */
+KITAKO_ANN_EXPORT int32_t kitako_ann_get_max_level(KitakoAnnHandle handle);
+
 #ifdef __cplusplus
 }
 #endif

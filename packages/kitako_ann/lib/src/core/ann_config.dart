@@ -181,8 +181,8 @@ class IvfPqConfig extends AnnConfig {
         'Dimension ($dimension) must be divisible by numSubquantizers ($numSubquantizers)',
       );
     }
-    if (numCentroidsPerSubquantizer <= 0 || numCentroidsPerSubquantizer > 65536) {
-      throw ArgumentError('numCentroidsPerSubquantizer must be between 1 and 65536');
+    if (numCentroidsPerSubquantizer <= 0 || numCentroidsPerSubquantizer > 256) {
+      throw ArgumentError('numCentroidsPerSubquantizer must be between 1 and 256 (uint8 PQ codes)');
     }
     if (numProbes <= 0 || numProbes > numClusters) {
       throw ArgumentError('numProbes must be between 1 and numClusters');

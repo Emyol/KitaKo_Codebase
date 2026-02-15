@@ -62,7 +62,7 @@ void main() {
         () => inference.embedText([1, 2, 3]),
         throwsA(isA<StateError>()),
       );
-    });
+  });
 
     test('embedImage throws when model not loaded', () {
       final inference = SiglipInference();
