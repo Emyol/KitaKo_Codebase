@@ -44,8 +44,8 @@ assets/models/onnx/
 assets/indexes/
 dataset/images/
 
-# Kitako models (too large for git)
-models/kitako/
+# Claude Code settings (local only)
+.claude/
 
 # App-specific large assets
 apps/kitako_app/assets/models/*.onnx
