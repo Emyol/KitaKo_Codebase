@@ -3,11 +3,13 @@ import 'package:flutter/services.dart';
 import 'src/ui/screens/startup_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/services/image_search_service.dart';
+import 'src/services/model_download_service.dart';
+import 'src/widgets/model_download_gate.dart';
 
 /// KitaKo - Image Retrieval Mobile Application
 /// Platform: Android & iOS
 /// Orientation: Portrait only
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Lock app to portrait orientation for mobile
@@ -15,6 +17,9 @@ void main() {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+
+  // Print model diagnostics at startup (await so it shows before app loads)
+  await ModelDownloadService().printModelSetupInstructions();
 
   runApp(const KitaKoApp());
 }
@@ -62,8 +67,8 @@ class _KitaKoAppState extends State<KitaKoApp> {
             brightness: Brightness.dark,
             scaffoldBackgroundColor: const Color(0xFF1A1A1A),
             colorScheme: const ColorScheme.dark(
-              primary: Color(0xFF4A90E2),
-              secondary: Color(0xFF5BA3F5),
+              primary: Color(0xFFFFD54F),
+              secondary: Color(0xFFFFE082),
               surface: Color(0xFF2A2A2A),
               background: Color(0xFF1A1A1A),
             ),
@@ -71,8 +76,9 @@ class _KitaKoAppState extends State<KitaKoApp> {
               backgroundColor: Color(0xFF1A1A1A),
               elevation: 0,
               centerTitle: false,
+              iconTheme: IconThemeData(color: Color(0xFFFFD54F)),
               titleTextStyle: TextStyle(
-                color: Color(0xFF1E3A5F),
+                color: Color(0xFFFFD54F),
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
@@ -125,8 +131,9 @@ class _KitaKoAppState extends State<KitaKoApp> {
               ),
             ),
           ),
-          home: Builder(
-            builder: (context) => StartupScreen(
+          home: ModelDownloadGate(
+            autoDownload: true, // Auto-download on first launch
+            child: StartupScreen(
               themeNotifier: _themeNotifier,
               searchService: _searchService,
             ),

@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:kitako_normalizer/kitako_normalizer.dart';
 import '../models/search_models.dart';
 import 'image_loader_service.dart';
 import 'embedding_service.dart';
+import 'embedding_storage_service.dart';
 import 'ann_search_service.dart';
 
 /// Main orchestrator service for image search functionality
@@ -35,6 +37,7 @@ class ImageSearchService {
   final ImageLoaderService _imageLoader;
   final EmbeddingService _embeddingService;
   final ANNSearchService _annSearch;
+  final EmbeddingStorageService _storage = EmbeddingStorageService();
   final TaglishNormalizer _normalizer = const TaglishNormalizer();
 
   /// Create a new ImageSearchService with optional custom services
@@ -53,28 +56,54 @@ class ImageSearchService {
   /// Stream controller for search state updates
   final _searchStateController = StreamController<SearchState>.broadcast();
 
+  /// Stream controller for image loading updates
+  final _imagesLoadedController = StreamController<List<ImageItem>>.broadcast();
+
   /// Current search state
   SearchState _currentState = const SearchState();
+
+  /// All loaded device images (for gallery display)
+  List<ImageItem> _loadedImages = [];
+
+  /// Count of images indexed with embeddings (for search)
+  int _indexedCount = 0;
 
   /// Stream of search state changes
   Stream<SearchState> get searchStateStream => _searchStateController.stream;
 
+  /// Stream of images loaded events (notifies when gallery images are available)
+  Stream<List<ImageItem>> get imagesLoadedStream => _imagesLoadedController.stream;
+
+  // ========== Service Access (for Alpha Testing) ==========
+  
+  /// Access to image loader service (for alpha testing)
+  ImageLoaderService get imageLoader => _imageLoader;
+  
+  /// Access to ANN search service (for alpha testing with brute force)
+  ANNSearchService get annSearchService => _annSearch;
+
   /// Current search state (read-only)
   SearchState get currentState => _currentState;
+
+  /// Access to embedding service (for model switching)
+  EmbeddingService get embeddingService => _embeddingService;
 
   /// Whether the service has been initialized
   bool _isInitialized = false;
 
-  /// Public getter for initialization status
-  bool get isInitialized => _isInitialized;
-
   // ========== Configuration ==========
 
   /// Number of top results to return
-  int topK = 30;
+  int topK = 20;
 
-  /// Minimum similarity score (0.0 to 1.0)
-  double similarityThreshold = 0.5;
+  /// Absolute floor: any result below this cosine similarity is discarded.
+  /// For SigLIP embeddings, scores below ~0.05 are pure noise.
+  double absoluteThreshold = 0.05;
+
+  /// Relative cutoff: results must score at least this fraction of the
+  /// top result's similarity. E.g. 0.4 means "at least 40% of the best match".
+  /// Set to 0.0 to disable relative filtering.
+  double relativeThreshold = 0.4;
 
   /// Whether to auto-index images on load
   bool autoIndex = true;
@@ -92,30 +121,48 @@ class ImageSearchService {
     try {
       debugPrint('ImageSearchService: Initializing...');
 
-      // Initialize all services
+      // Initialize loader and ANN (required)
       final loaderInit = await _imageLoader.initialize();
-      final embeddingInit = await _embeddingService.initialize();
       final annInit = await _annSearch.initialize();
 
-      if (!loaderInit || !embeddingInit || !annInit) {
-        debugPrint(
-          'ImageSearchService: One or more services failed to initialize',
-        );
+      if (!loaderInit || !annInit) {
+        debugPrint('ImageSearchService: Loader or ANN failed to initialize');
         return false;
       }
 
-      // Mark as initialized BEFORE indexing so search can work during indexing
-      _isInitialized = true;
-      debugPrint('ImageSearchService: Core services initialized');
+      // Initialize embedding service EARLY (before slow thumbnail loading)
+      // so it's ready when the user navigates to the alpha test screen.
+      final embeddingInit = await _embeddingService.initialize();
 
-      // Auto-index existing images if enabled (runs in background)
-      if (autoIndex) {
-        // Don't await - let indexing run in background
-        _indexDeviceImages().then((_) {
-          debugPrint('ImageSearchService: Background indexing complete');
-        }).catchError((e) {
-          debugPrint('ImageSearchService: Background indexing error: $e');
-        });
+      // Always load device images for gallery display
+      final allImages = await _imageLoader.loadDeviceImages();
+      if (allImages.isNotEmpty) {
+        // Load thumbnails for gallery
+        final imagesWithThumbs = <ImageItem>[];
+        for (final image in allImages.take(1000)) {
+          try {
+            final withThumb = await _imageLoader.getImageWithThumbnail(image.id);
+            imagesWithThumbs.add(withThumb);
+          } catch (_) {
+            imagesWithThumbs.add(image);
+          }
+        }
+        _loadedImages = imagesWithThumbs;
+        _imagesLoadedController.add(imagesWithThumbs);
+        debugPrint('ImageSearchService: Loaded ${imagesWithThumbs.length} images for gallery');
+      }
+
+      _isInitialized = true;
+
+      if (!embeddingInit) {
+        debugPrint('ImageSearchService: Initialized WITHOUT embedding model. '
+            'Install ONNX model files to enable search.');
+        return true;
+      }
+
+      // Auto-index existing images if a real model is loaded
+      if (autoIndex && _embeddingService.isImageReady) {
+        await _indexDeviceImages();
       }
 
       debugPrint('ImageSearchService: Initialized successfully');
@@ -142,7 +189,6 @@ class ImageSearchService {
   Future<void> searchImages(
     String query, {
     int? topK,
-    double? threshold,
   }) async {
     if (!_isInitialized) {
       throw StateError(
@@ -156,7 +202,6 @@ class ImageSearchService {
     }
 
     final k = topK ?? this.topK;
-    final thresh = threshold ?? similarityThreshold;
 
     // Normalize the query using TaglishNormalizer
     final normalizedQuery = _normalizer.normalize(query);
@@ -176,26 +221,45 @@ class ImageSearchService {
       // Step 1: Generate embedding for NORMALIZED query
       final queryEmbedding = await _embeddingService.generateEmbedding(normalizedQuery);
 
-      // Step 2: Search for similar images
-      final matchingImages = await _annSearch.searchSimilar(
+      // Step 2: Search with scores (no threshold — combo filter handles it)
+      final scoredResults = await _annSearch.searchSimilarWithScores(
         queryEmbedding,
         k: k,
-        threshold: thresh,
+        threshold: -1.0,
+        forceBruteForce: true,
       );
+
+      // Step 3: Apply combo filter (absolute floor + relative cutoff)
+      final filtered = _applyComboFilter(scoredResults);
+
+      // Step 4: Load thumbnails for search results
+      debugPrint('ImageSearchService: Loading thumbnails for ${filtered.length} results...');
+      final imagesWithThumbnails = <ImageItem>[];
+      final scores = <double>[];
+      for (final result in filtered) {
+        try {
+          final imageWithThumb = await _imageLoader.getImageWithThumbnail(result.image.id);
+          imagesWithThumbnails.add(imageWithThumb);
+        } catch (e) {
+          debugPrint('ImageSearchService: Failed to load thumbnail for ${result.image.id}: $e');
+          imagesWithThumbnails.add(result.image);
+        }
+        scores.add(result.similarity);
+      }
 
       stopwatch.stop();
       debugPrint(
         'ImageSearchService: Search completed in ${stopwatch.elapsedMilliseconds}ms',
       );
 
-      // Step 3: Update state with results
-      if (matchingImages.isEmpty) {
+      // Step 5: Update state with results
+      if (imagesWithThumbnails.isEmpty) {
         _updateState(
           SearchState(
             status: SearchStatus.noResults,
             query: query,
             normalizedQuery: normalizedQuery,
-            result: SearchResult(images: [], query: query),
+            result: SearchResult(images: [], scores: [], query: query),
           ),
         );
       } else {
@@ -204,7 +268,11 @@ class ImageSearchService {
             status: SearchStatus.success,
             query: query,
             normalizedQuery: normalizedQuery,
-            result: SearchResult(images: matchingImages, query: query),
+            result: SearchResult(
+              images: imagesWithThumbnails,
+              scores: scores,
+              query: query,
+            ),
           ),
         );
       }
@@ -224,6 +292,126 @@ class ImageSearchService {
   /// Clear current search and reset to initial state
   void clearSearch() {
     _updateState(const SearchState());
+  }
+
+  /// Search for similar images using an image query (image-to-image search)
+  ///
+  /// This method:
+  /// 1. Generates embedding for the query image
+  /// 2. Searches for similar images using ANN
+  /// 3. Updates search state throughout the process
+  ///
+  /// Parameters:
+  /// - [imageBytes]: The image data as bytes
+  /// - [topK]: Number of results to return (optional)
+  /// - [threshold]: Minimum similarity threshold (optional)
+  Future<void> searchByImage(
+    List<int> imageBytes, {
+    int? topK,
+  }) async {
+    if (!_isInitialized) {
+      throw StateError(
+        'ImageSearchService not initialized. Call initialize() first.',
+      );
+    }
+
+    final k = topK ?? this.topK;
+    final queryImageBytes = Uint8List.fromList(imageBytes);
+
+    try {
+      // Update to searching state with query image
+      _updateState(SearchState(
+        status: SearchStatus.searching,
+        query: '[Image Search]',
+        queryImage: queryImageBytes,
+      ));
+
+      debugPrint('ImageSearchService: Searching by image...');
+      final stopwatch = Stopwatch()..start();
+
+      // Step 1: Generate embedding for query image
+      final queryEmbedding = await _embeddingService.generateImageEmbedding(
+        queryImageBytes,
+      );
+
+      // Step 2: Search with scores
+      final scoredResults = await _annSearch.searchSimilarWithScores(
+        queryEmbedding,
+        k: k,
+        threshold: -1.0,
+        forceBruteForce: true,
+      );
+
+      // Step 3: Apply combo filter
+      final filtered = _applyComboFilter(scoredResults);
+
+      // Step 4: Load thumbnails for search results
+      debugPrint('ImageSearchService: Loading thumbnails for ${filtered.length} results...');
+      final imagesWithThumbnails = <ImageItem>[];
+      final scores = <double>[];
+      for (final result in filtered) {
+        try {
+          final imageWithThumb = await _imageLoader.getImageWithThumbnail(result.image.id);
+          imagesWithThumbnails.add(imageWithThumb);
+        } catch (e) {
+          debugPrint('ImageSearchService: Failed to load thumbnail for ${result.image.id}: $e');
+          imagesWithThumbnails.add(result.image);
+        }
+        scores.add(result.similarity);
+      }
+
+      stopwatch.stop();
+      debugPrint(
+        'ImageSearchService: Image search completed in ${stopwatch.elapsedMilliseconds}ms',
+      );
+
+      // Step 5: Update state with results
+      if (imagesWithThumbnails.isEmpty) {
+        _updateState(
+          SearchState(
+            status: SearchStatus.noResults,
+            query: '[Image Search]',
+            queryImage: queryImageBytes,
+            result: const SearchResult(images: [], scores: [], query: '[Image Search]'),
+          ),
+        );
+      } else {
+        _updateState(
+          SearchState(
+            status: SearchStatus.success,
+            query: '[Image Search]',
+            queryImage: queryImageBytes,
+            result: SearchResult(
+              images: imagesWithThumbnails,
+              scores: scores,
+              query: '[Image Search]',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('ImageSearchService: Image search failed: $e');
+      _updateState(
+        SearchState(
+          status: SearchStatus.error,
+          query: '[Image Search]',
+          queryImage: queryImageBytes,
+          error: e.toString(),
+        ),
+      );
+    }
+  }
+
+  /// Search for similar images using an indexed image ID
+  ///
+  /// Convenience method that loads the thumbnail for the given image ID
+  /// and performs image-to-image search.
+  Future<void> searchByImageId(String imageId) async {
+    final bytes = await _imageLoader.loadThumbnail(imageId);
+    if (bytes == null || bytes.isEmpty) {
+      throw StateError('Could not load image for ID: $imageId');
+    }
+    await searchByImage(bytes);
   }
 
   // ========== Image Management ==========
@@ -254,10 +442,13 @@ class ImageSearchService {
     }
   }
 
-  /// Get all loaded images
+  /// Get all loaded device images (for gallery display)
   List<ImageItem> getAllImages() {
-    return _imageLoader.getAllImages();
+    return _loadedImages;
   }
+
+  /// Get count of images indexed with embeddings (for search)
+  int get indexedImageCount => _indexedCount;
 
   /// Get image by ID
   ImageItem? getImageById(String id) {
@@ -288,6 +479,7 @@ class ImageSearchService {
   /// Dispose of all resources
   void dispose() {
     _searchStateController.close();
+    _imagesLoadedController.close();
     _imageLoader.dispose();
     _embeddingService.dispose();
     _annSearch.dispose();
@@ -297,124 +489,341 @@ class ImageSearchService {
 
   // ========== Private Methods ==========
 
+  /// Apply combo relevance filter: absolute floor + relative cutoff.
+  ///
+  /// 1. Discard any result with similarity < [absoluteThreshold] (noise floor).
+  /// 2. Of the remaining, discard any result whose similarity is less than
+  ///    [relativeThreshold] × (best result's similarity).
+  ///
+  /// The input list must already be sorted by similarity descending.
+  List<SearchResultWithScore> _applyComboFilter(
+    List<SearchResultWithScore> results,
+  ) {
+    if (results.isEmpty) return results;
+
+    // Step 1: absolute floor — remove pure noise
+    final aboveFloor = results
+        .where((r) => r.similarity >= absoluteThreshold)
+        .toList();
+
+    if (aboveFloor.isEmpty) {
+      debugPrint('ImageSearchService: Combo filter: all ${results.length} results '
+          'below absolute floor ($absoluteThreshold)');
+      return [];
+    }
+
+    // Step 2: relative cutoff — keep results within range of best match
+    final bestScore = aboveFloor.first.similarity;
+    final cutoff = bestScore * relativeThreshold;
+    final filtered = aboveFloor
+        .where((r) => r.similarity >= cutoff)
+        .toList();
+
+    debugPrint('ImageSearchService: Combo filter: '
+        '${results.length} raw → ${aboveFloor.length} above floor ($absoluteThreshold) '
+        '→ ${filtered.length} above relative cutoff '
+        '(${(relativeThreshold * 100).toStringAsFixed(0)}% of best ${bestScore.toStringAsFixed(3)} = ${cutoff.toStringAsFixed(3)})');
+
+    return filtered;
+  }
+
   /// Update search state and notify listeners
   void _updateState(SearchState newState) {
     _currentState = newState;
     _searchStateController.add(newState);
   }
 
-  /// Index all device images (OPTIMIZED with thumbnails + parallel loading)
+  /// Index all device images, restoring from cache when possible.
   ///
-  /// This is called automatically on initialization if autoIndex is true.
-  /// You can also call this manually after loading new images.
-  ///
-  /// Uses optimized thumbnail loading and batch embedding for speed.
+  /// Flow:
+  /// 1. Try to load cached embeddings (matching current model variant)
+  /// 2. Restore cached embeddings into ANN service + load saved IVF-PQ index
+  /// 3. Only embed NEW images that aren't in the cache
+  /// 4. Save updated cache after completion
   Future<void> _indexDeviceImages() async {
     try {
-      final images = await _imageLoader.loadDeviceImages();
+      final allImages = await _imageLoader.loadDeviceImages();
 
-      if (images.isEmpty) {
+      if (allImages.isEmpty) {
         debugPrint('ImageSearchService: No images to index');
         return;
       }
 
-      debugPrint('ImageSearchService: Indexing ${images.length} images (optimized)...');
-      final totalStopwatch = Stopwatch()..start();
-
-      // Step 1: Load thumbnails in parallel batches (FAST)
-      debugPrint('ImageSearchService: Step 1/3 - Loading thumbnails...');
-      final thumbnailStopwatch = Stopwatch()..start();
-
-      final thumbnailMap = await _imageLoader.loadThumbnailBatch(
-        images,
-        batchSize: 5, // Load 5 thumbnails concurrently
-        onProgress: (loaded, total) {
-          if (loaded % 20 == 0 || loaded == total) {
-            debugPrint('  Thumbnails: $loaded/$total');
-          }
-        },
-      );
-
-      thumbnailStopwatch.stop();
-      debugPrint(
-        'ImageSearchService: Thumbnails loaded in ${thumbnailStopwatch.elapsedMilliseconds}ms',
-      );
-
-      // Filter to only images with valid thumbnails
-      final validImages = images.where((img) => thumbnailMap.containsKey(img.id)).toList();
-
-      if (validImages.isEmpty) {
-        debugPrint('ImageSearchService: No valid thumbnails, using mock embeddings');
-        await _indexWithMockEmbeddings(images);
+      // Refuse to index with mock backend - would produce garbage results
+      if (_embeddingService.activeBackend == EmbeddingBackend.mock) {
+        debugPrint('ImageSearchService: Cannot index with MOCK backend - no real model loaded');
         return;
       }
 
-      // Step 2: Generate embeddings in parallel batches
-      debugPrint('ImageSearchService: Step 2/3 - Generating embeddings...');
-      final embeddingStopwatch = Stopwatch()..start();
+      if (!_embeddingService.isImageReady) {
+        debugPrint('ImageSearchService: Image encoder not ready, cannot index');
+        throw StateError(
+          'Image encoder not ready. Ensure model files are installed and loaded.',
+        );
+      }
 
-      final thumbnailBytes = validImages.map((img) => thumbnailMap[img.id]!).toList();
-      final embeddings = await _embeddingService.generateBatchImageEmbeddings(
-        thumbnailBytes,
-        batchSize: 3, // Process 3 images concurrently (balance speed vs memory)
-        onProgress: (completed, total) {
-          if (completed % 10 == 0 || completed == total) {
-            debugPrint('  Embeddings: $completed/$total');
+      const maxImagesToIndex = 1000;
+      final imagesToProcess = allImages.take(maxImagesToIndex).toList();
+
+      // ── Step 1: Try loading cached embeddings from storage layer ──
+      final modelVariant = _embeddingService.activeVariant?.name ?? 'unknown';
+      final snapshot = await _storage.loadAll(modelVariant);
+
+      int cachedCount = 0;
+      Set<String> cachedIds = {};
+
+      if (snapshot != null) {
+        // Filter cache to only include images still on device
+        final validCachedEmbeddings = <String, Float32List>{};
+        final validCachedMetadata = <String, ImageItem>{};
+
+        for (final image in imagesToProcess) {
+          if (snapshot.embeddings.containsKey(image.id)) {
+            validCachedEmbeddings[image.id] = snapshot.embeddings[image.id]!;
+            validCachedMetadata[image.id] = image;
           }
-        },
-      );
+        }
 
-      embeddingStopwatch.stop();
-      debugPrint(
-        'ImageSearchService: Embeddings generated in ${embeddingStopwatch.elapsedMilliseconds}ms',
-      );
+        if (validCachedEmbeddings.isNotEmpty) {
+          _annSearch.restoreFromCache(validCachedEmbeddings, validCachedMetadata);
+          cachedCount = validCachedEmbeddings.length;
+          cachedIds = validCachedEmbeddings.keys.toSet();
+        }
+      }
 
-      // Step 3: Index all embeddings
-      debugPrint('ImageSearchService: Step 3/3 - Building search index...');
-      final indexStopwatch = Stopwatch()..start();
+      // ── Step 2: Find images that need embedding ──
+      final newImages = imagesToProcess
+          .where((img) => !cachedIds.contains(img.id))
+          .toList();
 
-      await _annSearch.indexBatch(validImages, embeddings);
+      debugPrint('');
+      debugPrint('╔══════════════════════════════════════════════════════╗');
+      debugPrint('║             IMAGE EMBEDDING IN PROGRESS             ║');
+      debugPrint('╠══════════════════════════════════════════════════════╣');
+      debugPrint('║ Backend:    ${_embeddingService.activeBackend.name}');
+      debugPrint('║ Model:      ${_embeddingService.modelVersion.name}');
+      debugPrint('║ Total imgs: ${imagesToProcess.length}');
+      debugPrint('║ Cached:     $cachedCount (skipping)');
+      debugPrint('║ New:        ${newImages.length} (to embed)');
+      debugPrint('╚══════════════════════════════════════════════════════╝');
+      debugPrint('');
 
-      indexStopwatch.stop();
-      totalStopwatch.stop();
+      // If everything is cached, skip embedding entirely
+      if (newImages.isEmpty && _annSearch.isReady) {
+        debugPrint('');
+        debugPrint('╔══════════════════════════════════════════════════════╗');
+        debugPrint('║          EMBEDDINGS LOADED FROM STORAGE             ║');
+        debugPrint('╠══════════════════════════════════════════════════════╣');
+        debugPrint('║ Images:  $cachedCount');
+        debugPrint('║ Model:   $modelVariant');
+        debugPrint('║ Search:  Brute-force cosine similarity');
+        debugPrint('╚══════════════════════════════════════════════════════╝');
+        debugPrint('');
 
-      debugPrint('ImageSearchService: ════════════════════════════════════');
-      debugPrint('ImageSearchService: ✓ Indexing complete!');
-      debugPrint('  Images indexed: ${validImages.length}/${images.length}');
-      debugPrint('  Thumbnail loading: ${thumbnailStopwatch.elapsedMilliseconds}ms');
-      debugPrint('  Embedding generation: ${embeddingStopwatch.elapsedMilliseconds}ms');
-      debugPrint('  Index building: ${indexStopwatch.elapsedMilliseconds}ms');
-      debugPrint('  TOTAL: ${totalStopwatch.elapsedMilliseconds}ms');
-      debugPrint('  Average per image: ${(totalStopwatch.elapsedMilliseconds / validImages.length).toStringAsFixed(1)}ms');
-      debugPrint('ImageSearchService: ════════════════════════════════════');
+        await _loadThumbnailsAndNotify(imagesToProcess);
+        return;
+      }
+
+      // ── Step 3: Embed only new images ──
+      final stopwatch = Stopwatch()..start();
+      final newlyIndexed = <ImageItem>[];
+      final newEmbeddings = <List<double>>[];
+      int successCount = 0;
+      int failedCount = 0;
+
+      const batchSize = 10;
+
+      for (var batchStart = 0; batchStart < newImages.length; batchStart += batchSize) {
+        final batchEnd = (batchStart + batchSize).clamp(0, newImages.length);
+        final batch = newImages.sublist(batchStart, batchEnd);
+
+        final futures = batch.map((image) async {
+          try {
+            final bytes = await _imageLoader.loadThumbnail(image.id);
+            if (bytes != null && bytes.isNotEmpty) {
+              final embedding = await _embeddingService.generateImageEmbedding(bytes);
+              return (image: image, embedding: embedding, success: true);
+            }
+          } catch (e) {
+            debugPrint('ImageSearchService: Failed to embed ${image.id}: $e');
+          }
+          return (image: image, embedding: <double>[], success: false);
+        }).toList();
+
+        final results = await Future.wait(futures);
+
+        for (final result in results) {
+          if (result.success) {
+            newlyIndexed.add(result.image);
+            newEmbeddings.add(result.embedding);
+            successCount++;
+          } else {
+            failedCount++;
+          }
+        }
+
+        // Progress bar
+        final total = newImages.length;
+        final percent = (batchEnd / total * 100).toStringAsFixed(1);
+        final elapsedSec = stopwatch.elapsed.inSeconds;
+        final avgMs = successCount > 0
+            ? (stopwatch.elapsedMilliseconds / successCount).toStringAsFixed(0)
+            : '?';
+        final remaining = total - batchEnd;
+        final etaSec = successCount > 0
+            ? (remaining * stopwatch.elapsedMilliseconds / successCount / 1000).toStringAsFixed(0)
+            : '?';
+        final barWidth = 20;
+        final filled = (batchEnd / total * barWidth).round();
+        final empty = barWidth - filled;
+        final bar = '${'█' * filled}${'░' * empty}';
+
+        debugPrint(
+          'Embedding: [$bar] $percent%  ($successCount/$total)  '
+          '${elapsedSec}s elapsed  ~${etaSec}s remaining  ${avgMs}ms/img',
+        );
+      }
+
+      // Sanity check
+      if (successCount == 0 && newImages.isNotEmpty) {
+        throw StateError(
+          'All ${newImages.length} new images failed to embed. '
+          'The model may not be loaded correctly.',
+        );
+      }
+
+      // Index the newly embedded images
+      if (newlyIndexed.isNotEmpty) {
+        await _annSearch.indexBatch(newlyIndexed, newEmbeddings);
+      }
+
+      stopwatch.stop();
+      final avgTimeMs = successCount > 0
+          ? (stopwatch.elapsedMilliseconds / successCount).toStringAsFixed(1)
+          : '0';
+
+      debugPrint('');
+      debugPrint('╔══════════════════════════════════════════════════════╗');
+      debugPrint('║            EMBEDDING COMPLETE                       ║');
+      debugPrint('╠══════════════════════════════════════════════════════╣');
+      debugPrint('║ From cache:     $cachedCount');
+      debugPrint('║ Newly embedded: $successCount');
+      debugPrint('║ Failed/Skipped: $failedCount');
+      debugPrint('║ Total indexed:  ${cachedCount + successCount}');
+      debugPrint('║ Time (new):     ${stopwatch.elapsedMilliseconds}ms (${(stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1)}s)');
+      debugPrint('║ Avg per image:  ${avgTimeMs}ms');
+      debugPrint('╚══════════════════════════════════════════════════════╝');
+      debugPrint('');
+
+      // ── Step 4: Save cache ──
+      await _saveEmbeddingCache();
+
+      // ── Step 5: Load thumbnails and notify ──
+      // Build the full list of indexed images (cached + new)
+      final allIndexedImages = imagesToProcess
+          .where((img) => cachedIds.contains(img.id) || newlyIndexed.any((n) => n.id == img.id))
+          .toList();
+      await _loadThumbnailsAndNotify(allIndexedImages);
 
     } catch (e) {
       debugPrint('ImageSearchService: Failed to index images: $e');
-      debugPrint('ImageSearchService: Falling back to mock embeddings...');
-      try {
-        final images = _imageLoader.getAllImages();
-        await _indexWithMockEmbeddings(images);
-      } catch (_) {
-        rethrow;
-      }
+      rethrow;
     }
   }
 
-  /// Fallback: Index with mock embeddings when real embedding fails
-  Future<void> _indexWithMockEmbeddings(List<ImageItem> images) async {
-    debugPrint('ImageSearchService: Using mock embeddings for ${images.length} images');
+  /// Save current embeddings via the storage layer.
+  Future<void> _saveEmbeddingCache() async {
+    try {
+      final modelVariant = _embeddingService.activeVariant?.name ?? 'unknown';
+      final embeddings = _annSearch.imageEmbeddings;
+      final metadata = _annSearch.imageMetadata;
 
-    final embeddings = <List<double>>[];
-    for (var i = 0; i < images.length; i++) {
-      // Generate deterministic mock embedding based on image ID
-      final mockEmbedding = List.generate(
-        EmbeddingService.embeddingDimension,
-        (index) => ((images[i].id.hashCode + index) % 1000) / 1000.0 - 0.5,
+      if (embeddings.isEmpty) return;
+
+      final imagePaths = metadata.map((k, v) => MapEntry(k, v.path));
+
+      await _storage.saveAll(
+        embeddings: Map<String, Float32List>.from(embeddings),
+        imagePaths: imagePaths,
+        modelVariant: modelVariant,
       );
-      embeddings.add(mockEmbedding);
+
+      debugPrint('');
+      debugPrint('╔══════════════════════════════════════════════════════╗');
+      debugPrint('║          EMBEDDINGS SAVED TO STORAGE                ║');
+      debugPrint('╠══════════════════════════════════════════════════════╣');
+      debugPrint('║ Images:  ${embeddings.length}');
+      debugPrint('║ Model:   $modelVariant');
+      debugPrint('║ Search:  Brute-force cosine similarity');
+      debugPrint('╚══════════════════════════════════════════════════════╝');
+      debugPrint('');
+    } catch (e) {
+      debugPrint('ImageSearchService: Failed to save to storage: $e');
+      // Non-fatal — next launch will just re-embed
+    }
+  }
+
+  /// Load thumbnails for the given images and notify listeners.
+  Future<void> _loadThumbnailsAndNotify(List<ImageItem> images) async {
+    debugPrint('ImageSearchService: Loading thumbnails for ${images.length} images...');
+    final imagesWithThumbnails = <ImageItem>[];
+    for (final image in images) {
+      try {
+        final imageWithThumb = await _imageLoader.getImageWithThumbnail(image.id);
+        imagesWithThumbnails.add(imageWithThumb);
+      } catch (e) {
+        debugPrint('ImageSearchService: Failed to load thumbnail for ${image.id}: $e');
+        imagesWithThumbnails.add(image);
+      }
     }
 
-    await _annSearch.indexBatch(images, embeddings);
-    debugPrint('ImageSearchService: Mock indexing complete');
+    _loadedImages = imagesWithThumbnails;
+    _indexedCount = imagesWithThumbnails.length;
+    _imagesLoadedController.add(imagesWithThumbnails);
+    debugPrint('ImageSearchService: Gallery ready with ${imagesWithThumbnails.length} images');
+  }
+
+  // ========== Model Management ==========
+
+  /// Re-index all images with the current model
+  ///
+  /// Use this after switching models to regenerate all embeddings.
+  /// This will take 2-3 minutes for 1000 images.
+  Future<void> reindexAllImages() async {
+    if (!_isInitialized) {
+      throw StateError('ImageSearchService not initialized');
+    }
+
+    // Validate that a real model is loaded before wiping the index
+    if (_embeddingService.activeBackend == EmbeddingBackend.mock) {
+      throw StateError(
+        'Cannot re-index with MOCK backend. No real model is loaded.',
+      );
+    }
+    if (!_embeddingService.isImageReady) {
+      throw StateError(
+        'Image encoder not ready. Ensure model files are installed and loaded.',
+      );
+    }
+
+    debugPrint('ImageSearchService: Re-indexing all images with current model...');
+    debugPrint('ImageSearchService: Backend: ${_embeddingService.activeBackend.name}, '
+        'Model: ${_embeddingService.modelVersion.name}');
+
+    try {
+      // Clear existing embeddings and disk cache
+      _annSearch.clearIndex();
+      _indexedCount = 0;
+      await _storage.clear();
+
+      // Re-index with current model (will embed all images fresh)
+      await _indexDeviceImages();
+
+      debugPrint('ImageSearchService: Re-indexing complete');
+      debugPrint('ImageSearchService: Total images indexed: $_indexedCount');
+    } catch (e) {
+      debugPrint('ImageSearchService: Failed to re-index: $e');
+      rethrow;
+    }
   }
 }

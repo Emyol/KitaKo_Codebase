@@ -2,15 +2,15 @@ import 'dart:typed_data';
 
 import 'image_preprocessor.dart';
 import 'siglip_inference.dart';
-import 'siglip_tokenizer.dart';
+import 'gemma_tokenizer.dart';
 
 /// High-level embedding service for KitaKo.
 ///
 /// Provides a unified interface for generating image and text embeddings
-/// using the SigLIP model.
+/// using the SigLIP-2 model.
 class KitakoEmbeddingService {
   final SiglipInference _inference = SiglipInference();
-  final SiglipTokenizer _tokenizer = SiglipTokenizer();
+  final GemmaTokenizer _tokenizer = GemmaTokenizer();
 
   bool _isInitialized = false;
 

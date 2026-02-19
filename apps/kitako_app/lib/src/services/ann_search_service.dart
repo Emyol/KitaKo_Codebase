@@ -1,114 +1,51 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import '../models/search_models.dart';
 
-// Conditional imports for non-web platforms
-import 'ann_search_service_stub.dart'
-    if (dart.library.io) 'ann_search_service_io.dart' as platform;
-
-/// Service for Approximate Nearest Neighbor (ANN) search
+/// Brute-force similarity search service for image embeddings.
 ///
-/// This service wraps the kitako_ann package and provides:
-/// - HNSW-based vector similarity search via native FFI
-/// - Fallback to brute-force search when native isn't available
-/// - Index management and lifecycle
+/// Computes exact cosine similarity over all stored embeddings.
+/// This gives 100% recall and is fast enough for datasets up to ~10K images
+/// (751 images searches in ~2ms on a mobile device).
 ///
-/// Example usage:
+/// Usage:
 /// ```dart
 /// final annService = ANNSearchService();
 /// await annService.initialize();
-/// final results = await annService.searchSimilar(queryEmbedding, k: 10);
+///
+/// // Index images with embeddings
+/// await annService.indexBatch(images, embeddings);
+///
+/// // Search for similar images
+/// final results = await annService.searchSimilarWithScores(queryEmbedding, k: 10);
 /// ```
 class ANNSearchService {
-  /// The real ANN search service from kitako_ann
-  platform.AnnClientWrapper? _annClient;
-
   /// Whether the service has been initialized
   bool _isInitialized = false;
 
-  /// Whether we're using native HNSW or fallback
-  bool _usingNativeHnsw = false;
+  /// Image ID → embedding vector
+  final Map<String, Float32List> _imageEmbeddings = {};
 
-  /// Fallback: Index of image embeddings (brute-force)
-  final Map<String, List<double>> _imageEmbeddings = {};
-
-  /// Metadata for indexed images
+  /// Image ID → image metadata
   final Map<String, ImageItem> _imageMetadata = {};
 
-  /// ID to index mapping for native HNSW
-  final Map<int, String> _hnswIdToImageId = {};
-  final Map<String, int> _imageIdToHnswId = {};
-  int _nextHnswId = 0;
-
   /// Number of top results to return by default
-  static const int defaultTopK = 30;
+  static const int defaultTopK = 20;
 
-  /// Similarity threshold (0.0 to 1.0)
-  static const double similarityThreshold = 0.3;
+  /// Similarity threshold (cosine similarity)
+  /// Set to -1.0 to return ALL results regardless of similarity for debugging.
+  static const double similarityThreshold = -1.0;
 
-  /// Asset paths
-  static const String _indexAsset = 'assets/index/ann_index.bin';
+  /// Whether the index has any embeddings and is ready for search
+  bool get isReady => _isInitialized && _imageEmbeddings.isNotEmpty;
 
-  /// Whether native HNSW is being used
-  bool get usingNativeHnsw => _usingNativeHnsw;
-
-  /// Initialize the ANN search service
-  ///
-  /// Attempts to load native HNSW index, falls back to brute-force if unavailable.
-  ///
-  /// Returns `true` if initialization was successful
+  /// Initialize the search service
   Future<bool> initialize() async {
     if (_isInitialized) return true;
-
-    try {
-      debugPrint('ANNSearchService: Initializing...');
-
-      // Check if native ANN is supported on this platform
-      if (!platform.AnnPlatformHelper.isSupported) {
-        debugPrint('ANNSearchService: Native not supported on this platform');
-        _usingNativeHnsw = false;
-      } else {
-        // Try to load native HNSW index
-        try {
-          await _initializeNativeHnsw();
-          _usingNativeHnsw = true;
-          debugPrint('ANNSearchService: Using native HNSW index');
-        } catch (e) {
-          debugPrint('ANNSearchService: Native HNSW unavailable: $e');
-          debugPrint('ANNSearchService: Using brute-force fallback');
-          _usingNativeHnsw = false;
-        }
-      }
-
-      _isInitialized = true;
-      debugPrint('ANNSearchService: Initialized successfully (native: $_usingNativeHnsw)');
-      return true;
-    } catch (e) {
-      debugPrint('ANNSearchService: Failed to initialize: $e');
-      return false;
-    }
-  }
-
-  /// Initialize native HNSW from bundled assets
-  Future<void> _initializeNativeHnsw() async {
-    // Copy index from assets to file system (native FFI needs file path)
-    final indexPath = await platform.AnnPlatformHelper.copyAssetToFile(
-      _indexAsset,
-      'ann_index.bin',
-    );
-
-    // If no valid index file, skip native initialization
-    if (indexPath == null) {
-      throw StateError('No pre-built ANN index available');
-    }
-
-    _annClient = await platform.AnnPlatformHelper.createClient(
-      indexPath: indexPath,
-    );
-
-    debugPrint('ANNSearchService: Loaded HNSW index with ${_annClient!.indexSize} items');
+    _isInitialized = true;
+    debugPrint('ANNSearchService: Initialized (brute-force search)');
+    return true;
   }
 
   /// Index an image with its embedding
@@ -119,18 +56,8 @@ class ANNSearchService {
       );
     }
 
-    // Store in local maps (for metadata lookup and brute-force fallback)
-    _imageEmbeddings[image.id] = embedding;
+    _imageEmbeddings[image.id] = Float32List.fromList(embedding);
     _imageMetadata[image.id] = image;
-
-    // Map IDs for potential native HNSW use
-    if (!_imageIdToHnswId.containsKey(image.id)) {
-      _imageIdToHnswId[image.id] = _nextHnswId;
-      _hnswIdToImageId[_nextHnswId] = image.id;
-      _nextHnswId++;
-    }
-
-    debugPrint('ANNSearchService: Indexed image ${image.id}');
   }
 
   /// Index multiple images in batch
@@ -143,15 +70,17 @@ class ANNSearchService {
     }
 
     for (var i = 0; i < images.length; i++) {
-      await indexImage(images[i], embeddings[i]);
+      _imageEmbeddings[images[i].id] = Float32List.fromList(embeddings[i]);
+      _imageMetadata[images[i].id] = images[i];
     }
 
-    debugPrint('ANNSearchService: Indexed ${images.length} images');
+    debugPrint('ANNSearchService: Indexed ${images.length} images '
+        '(total: ${_imageEmbeddings.length})');
   }
 
-  /// Search for similar images
-  ///
-  /// Uses native HNSW if available, falls back to brute-force.
+  // ========== Search ==========
+
+  /// Search for similar images (returns ImageItem list without scores)
   Future<List<ImageItem>> searchSimilar(
     List<double> queryEmbedding, {
     int k = defaultTopK,
@@ -166,153 +95,180 @@ class ANNSearchService {
     final effectiveThreshold = threshold ?? similarityThreshold;
     final stopwatch = Stopwatch()..start();
 
-    try {
-      List<ImageItem> results;
+    final results = _bruteForceSearch(queryEmbedding, k, effectiveThreshold);
 
-      if (_usingNativeHnsw && _annClient != null && _annClient!.indexSize > 0) {
-        // Use native HNSW search
-        results = await _searchNativeHnsw(queryEmbedding, k, effectiveThreshold);
-      } else {
-        // Fall back to brute-force
-        results = _bruteForceSearch(queryEmbedding, k, effectiveThreshold);
-      }
-
-      stopwatch.stop();
-      debugPrint(
-        'ANNSearchService: Search completed in ${stopwatch.elapsedMilliseconds}ms, '
-        'found ${results.length} results (native: $_usingNativeHnsw)',
-      );
-
-      return results;
-    } catch (e) {
-      debugPrint('ANNSearchService: Search failed: $e');
-      // Fall back to brute force on error
-      return _bruteForceSearch(queryEmbedding, k, effectiveThreshold);
-    }
-  }
-
-  /// Search using native HNSW
-  Future<List<ImageItem>> _searchNativeHnsw(
-    List<double> queryEmbedding,
-    int k,
-    double threshold,
-  ) async {
-    final searchResults = await _annClient!.search(
-      queryEmbedding,
-      k: k,
-      threshold: threshold,
+    stopwatch.stop();
+    debugPrint(
+      'ANNSearchService: Search completed in ${stopwatch.elapsedMilliseconds}ms, '
+      'found ${results.length} results (${_imageEmbeddings.length} total)',
     );
-
-    final results = <ImageItem>[];
-    for (final result in searchResults) {
-      final imageId = _hnswIdToImageId[result.id];
-      if (imageId != null && _imageMetadata.containsKey(imageId)) {
-        results.add(_imageMetadata[imageId]!);
-      }
-    }
 
     return results;
   }
 
+  /// Search for similar images with similarity scores
+  Future<List<SearchResultWithScore>> searchSimilarWithScores(
+    List<double> queryEmbedding, {
+    int k = defaultTopK,
+    double? threshold,
+    bool forceBruteForce = false, // kept for API compat, always brute-force
+  }) async {
+    if (!_isInitialized) {
+      throw StateError(
+        'ANNSearchService not initialized. Call initialize() first.',
+      );
+    }
+
+    final effectiveThreshold = threshold ?? similarityThreshold;
+    final stopwatch = Stopwatch()..start();
+
+    final results = _bruteForceSearchWithScores(
+      queryEmbedding, k, effectiveThreshold,
+    );
+
+    stopwatch.stop();
+    debugPrint(
+      'ANNSearchService: Search completed in ${stopwatch.elapsedMilliseconds}ms, '
+      'found ${results.length} results (${_imageEmbeddings.length} total)',
+    );
+
+    return results;
+  }
+
+  // ========== Index Management ==========
+
   /// Get the total number of indexed images
   int get indexSize => _imageMetadata.length;
 
-  /// Get native index size
-  int get nativeIndexSize => _annClient?.indexSize ?? 0;
-
   /// Check if an image is indexed
   bool isIndexed(String imageId) => _imageMetadata.containsKey(imageId);
-q
+
   /// Get all indexed images
-  List<ImageItem> getAllIndexedImages() {
-    return _imageMetadata.values.toList();
-  }
+  List<ImageItem> getAllIndexedImages() => _imageMetadata.values.toList();
 
   /// Remove an image from the index
   void removeImage(String imageId) {
     _imageEmbeddings.remove(imageId);
     _imageMetadata.remove(imageId);
-    debugPrint('ANNSearchService: Removed image $imageId from index');
   }
 
   /// Clear the entire index
   void clearIndex() {
     _imageEmbeddings.clear();
     _imageMetadata.clear();
-    _hnswIdToImageId.clear();
-    _imageIdToHnswId.clear();
-    _nextHnswId = 0;
     debugPrint('ANNSearchService: Index cleared');
   }
+
+  // ========== Data Export (for storage layer) ==========
+
+  /// Read-only access to stored embeddings.
+  Map<String, Float32List> get imageEmbeddings =>
+      Map.unmodifiable(_imageEmbeddings);
+
+  /// Read-only access to image metadata.
+  Map<String, ImageItem> get imageMetadata =>
+      Map.unmodifiable(_imageMetadata);
+
+  // ========== Cache Restore ==========
+
+  /// Restore internal state from cached embeddings + metadata.
+  ///
+  /// This populates the in-memory maps without running any ONNX inference.
+  void restoreFromCache(
+    Map<String, Float32List> embeddings,
+    Map<String, ImageItem> metadata,
+  ) {
+    for (final entry in embeddings.entries) {
+      _imageEmbeddings[entry.key] = entry.value;
+      if (metadata.containsKey(entry.key)) {
+        _imageMetadata[entry.key] = metadata[entry.key]!;
+      }
+    }
+
+    debugPrint('ANNSearchService: Restored ${embeddings.length} cached embeddings');
+  }
+
+  // ========== Statistics ==========
 
   /// Get index statistics
   Map<String, dynamic> getIndexStats() {
     return {
       'totalImages': _imageMetadata.length,
       'totalEmbeddings': _imageEmbeddings.length,
-      'nativeIndexSize': _annClient?.indexSize ?? 0,
-      'usingNativeHnsw': _usingNativeHnsw,
+      'isReady': isReady,
       'dimensionality': _imageEmbeddings.isEmpty
           ? 0
           : _imageEmbeddings.values.first.length,
+      'algorithm': 'Brute-Force (Cosine Similarity)',
     };
   }
 
   /// Dispose of resources
   void dispose() {
-    _annClient?.dispose();
-    _annClient = null;
     clearIndex();
     _isInitialized = false;
     debugPrint('ANNSearchService: Disposed');
   }
 
-  // ========== Brute-Force Fallback ==========
+  // ========== Private Search Methods ==========
 
-  /// Brute force similarity search
+  /// Brute force search returning ImageItem list
   List<ImageItem> _bruteForceSearch(
     List<double> queryEmbedding,
     int k,
     double threshold,
   ) {
-    debugPrint('ANNSearchService: Brute force search starting...');
-    debugPrint('ANNSearchService: Query embedding length: ${queryEmbedding.length}');
-    debugPrint('ANNSearchService: Indexed images: ${_imageEmbeddings.length}');
-    debugPrint('ANNSearchService: Threshold: $threshold');
-    
-    final similarities = <String, double>{};
-    double maxSimilarity = double.negativeInfinity;
-    double minSimilarity = double.infinity;
+    if (_imageEmbeddings.isEmpty) return [];
+
+    final allSimilarities = <MapEntry<String, double>>[];
 
     for (final entry in _imageEmbeddings.entries) {
       final similarity = _cosineSimilarity(queryEmbedding, entry.value);
-      if (similarity > maxSimilarity) maxSimilarity = similarity;
-      if (similarity < minSimilarity) minSimilarity = similarity;
-      
-      // For testing: use threshold 0.0 to see all results
-      if (similarity >= 0.0) {
-        similarities[entry.key] = similarity;
+      if (threshold < 0 || similarity >= threshold) {
+        allSimilarities.add(MapEntry(entry.key, similarity));
       }
     }
 
-    debugPrint('ANNSearchService: Similarity range: $minSimilarity to $maxSimilarity');
-    debugPrint('ANNSearchService: Images passing threshold: ${similarities.length}');
+    allSimilarities.sort((a, b) => b.value.compareTo(a.value));
 
-    final sortedIds = similarities.keys.toList()
-      ..sort((a, b) => similarities[b]!.compareTo(similarities[a]!));
+    return allSimilarities
+        .take(k)
+        .map((entry) => _imageMetadata[entry.key]!)
+        .toList();
+  }
 
-    // Log top 5 similarities
-    final top5 = sortedIds.take(5);
-    for (final id in top5) {
-      debugPrint('ANNSearchService: Top result: $id = ${similarities[id]}');
+  /// Brute force search returning results with similarity scores
+  List<SearchResultWithScore> _bruteForceSearchWithScores(
+    List<double> queryEmbedding,
+    int k,
+    double threshold,
+  ) {
+    if (_imageEmbeddings.isEmpty) return [];
+
+    final allResults = <SearchResultWithScore>[];
+
+    for (final entry in _imageEmbeddings.entries) {
+      final similarity = _cosineSimilarity(queryEmbedding, entry.value);
+      final image = _imageMetadata[entry.key];
+      if (image != null && (threshold < 0 || similarity >= threshold)) {
+        allResults.add(SearchResultWithScore(image: image, similarity: similarity));
+      }
     }
 
-    final topK = sortedIds.take(k);
-    return topK.map((id) => _imageMetadata[id]!).toList();
+    allResults.sort((a, b) => b.similarity.compareTo(a.similarity));
+
+    // Print top 5 for debugging
+    debugPrint('ANNSearchService: Top 5 with scores:');
+    for (var i = 0; i < allResults.length && i < 5; i++) {
+      final result = allResults[i];
+      debugPrint('  ${i + 1}. ${result.image.id}: ${result.similarity.toStringAsFixed(4)}');
+    }
+
+    return allResults.take(k).toList();
   }
 
   /// Calculate cosine similarity between two vectors
-  double _cosineSimilarity(List<double> a, List<double> b) {
+  double _cosineSimilarity(List<double> a, List<num> b) {
     if (a.length != b.length) {
       throw ArgumentError('Vectors must have same length');
     }

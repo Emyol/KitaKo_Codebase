@@ -7,4 +7,9 @@ library kitako_embedding;
 export 'src/embedding_service.dart';
 export 'src/image_preprocessor.dart';
 export 'src/siglip_inference.dart';
-export 'src/siglip_tokenizer.dart';
+export 'src/gemma_tokenizer.dart';
+
+// ONNX-based inference (alternative to TFLite)
+export 'src/onnx_embedding_service.dart';
+export 'src/onnx_siglip_inference.dart';
+export 'src/siglip_model_config.dart';

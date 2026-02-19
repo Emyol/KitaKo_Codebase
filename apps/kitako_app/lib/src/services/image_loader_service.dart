@@ -1,49 +1,27 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:photo_manager/photo_manager.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/search_models.dart';
 
-/// Service for loading and managing device images
+/// Service for loading and managing device images from the test dataset.
 ///
-/// This service handles:
-/// - Loading images from device storage using photo_manager
-/// - Caching image metadata
-/// - Managing image permissions
-/// - Graceful fallback to mock data if permissions denied
-/// - Optimized thumbnail loading for faster embedding
-/// - Parallel batch processing for improved performance
-///
-/// Example usage:
-/// ```dart
-/// final imageLoader = ImageLoaderService();
-/// await imageLoader.initialize();
-/// final images = await imageLoader.loadDeviceImages();
-///
-/// // Fast thumbnail loading for embedding
-/// final thumbnails = await imageLoader.loadThumbnailBatch(images.take(10).toList());
-/// ```
+/// Only loads images from the test dataset directory — either copied from
+/// ADB staging (`/data/local/tmp/test_images/test`) or already present in
+/// the app's external storage (`<extDir>/test_images/`).
 class ImageLoaderService {
   /// Cache of loaded images
   final List<ImageItem> _imageCache = [];
 
-  /// Cache of AssetEntity objects for getting bytes (Android scoped storage)
-  final Map<String, AssetEntity> _assetCache = {};
-
-  /// Cache of thumbnail bytes for fast re-access
-  final Map<String, Uint8List> _thumbnailCache = {};
+  /// File cache for test dataset images (id -> File)
+  final Map<String, File> _testFileCache = {};
 
   /// Whether the service has been initialized
   bool _isInitialized = false;
 
-  /// Thumbnail size for embedding (matches SigLIP input size)
-  static const int thumbnailSize = 224;
-
-  /// Default parallel batch size
-  static const int defaultBatchSize = 5;
-
-  /// Maximum thumbnail cache size (in number of images)
-  static const int maxThumbnailCacheSize = 100;
+  /// Whether we're using a test dataset from the app's external files dir
+  bool _useTestDataset = false;
 
   /// Supported image file extensions
   static const List<String> _supportedExtensions = [
@@ -55,63 +33,77 @@ class ImageLoaderService {
     '.webp',
   ];
 
-  /// Initialize the image loader service
+  /// Initialize the image loader service.
   ///
-  /// This should be called before using any other methods.
-  /// It requests gallery permissions and prepares the image cache.
+  /// Looks for test images in order:
+  ///   1. App's external dir (survives flutter re-runs, deleted on uninstall)
+  ///   2. /data/local/tmp/test_images/test (where `adb push` lands)
   ///
-  /// Returns `true` if initialization was successful
+  /// Returns `true` if initialization was successful.
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
     try {
-      debugPrint('ImageLoaderService: Requesting gallery permissions...');
+      final extDir = await getExternalStorageDirectory();
+      if (extDir != null) {
+        final appTestDir = Directory('${extDir.path}/test_images');
 
-      // Request storage permissions with explicit request
-      final PermissionState ps = await PhotoManager.requestPermissionExtend(
-        requestOption: const PermissionRequestOption(
-          iosAccessLevel: IosAccessLevel.readWrite,
-        ),
-      );
+        // Copy from ADB staging if app dir is empty/missing
+        if (!await appTestDir.exists() || await _isDirEmpty(appTestDir)) {
+          // adb push creates a nested subdir with the pushed folder's name
+          final tmpTestDir = Directory('/data/local/tmp/test_images/test');
+          if (await tmpTestDir.exists() && !await _isDirEmpty(tmpTestDir)) {
+            debugPrint('ImageLoaderService: Copying test images from ADB staging to app dir...');
+            await appTestDir.create(recursive: true);
+            int copied = 0;
+            await for (final entity in tmpTestDir.list()) {
+              if (entity is File && isImageSupported(entity.path)) {
+                final name = entity.uri.pathSegments.last;
+                await entity.copy('${appTestDir.path}/$name');
+                copied++;
+              }
+            }
+            debugPrint('ImageLoaderService: Copied $copied test images to app dir');
+          }
+        }
 
-      debugPrint('ImageLoaderService: Permission state - isAuth: ${ps.isAuth}, hasAccess: ${ps.hasAccess}');
-
-      // Accept both isAuth and hasAccess (for limited access on iOS/Android 13+)
-      if (ps.isAuth || ps.hasAccess) {
-        _isInitialized = true;
-        debugPrint('ImageLoaderService: ✓ Initialized with gallery access');
-        return true;
-      } else {
-        debugPrint('ImageLoaderService: ⚠️  Permission denied');
-        debugPrint('  - Permission state: ${ps.toString()}');
-        debugPrint('  - isAuth: ${ps.isAuth}');
-        debugPrint('  - hasAccess: ${ps.hasAccess}');
-        debugPrint('  - Will use mock data');
-
-        // Still mark as initialized to allow mock fallback
-        _isInitialized = true;
-        return true;
+        // Load from app test dir
+        if (await appTestDir.exists()) {
+          final entries = await appTestDir.list().toList();
+          final imageFiles = entries
+              .whereType<File>()
+              .where((f) => isImageSupported(f.path))
+              .toList();
+          if (imageFiles.isNotEmpty) {
+            _useTestDataset = true;
+            for (final file in imageFiles) {
+              final name = file.uri.pathSegments.last;
+              final id = 'test_$name';
+              _testFileCache[id] = file;
+            }
+            debugPrint('ImageLoaderService: Found ${imageFiles.length} test images — using test dataset');
+            _isInitialized = true;
+            return true;
+          }
+        }
       }
-    } catch (e, stackTrace) {
+
+      // No test dataset found
+      debugPrint('ImageLoaderService: No test dataset found in app dir or ADB staging.');
+      debugPrint('ImageLoaderService: Push test images via ADB:');
+      debugPrint('  adb push <local_test_images_folder> /data/local/tmp/test_images');
+      _isInitialized = true;
+      return true;
+    } catch (e) {
       debugPrint('ImageLoaderService: Failed to initialize: $e');
-      debugPrint('Stack trace: $stackTrace');
-      // Mark as initialized anyway to allow mock fallback
       _isInitialized = true;
       return true;
     }
   }
 
-  /// Load all images from device storage
+  /// Load all images from the test dataset.
   ///
-  /// Returns a list of [ImageItem] objects representing REAL images on the device.
-  /// Falls back to mock data only if:
-  /// - Permissions are denied
-  /// - No images are found
-  /// - An error occurs
-  ///
-  /// Images are cached for subsequent calls.
-  ///
-  /// Throws [StateError] if service is not initialized
+  /// Returns an empty list if no test dataset was found during initialization.
   Future<List<ImageItem>> loadDeviceImages() async {
     if (!_isInitialized) {
       throw StateError(
@@ -124,115 +116,78 @@ class ImageLoaderService {
       return List.unmodifiable(_imageCache);
     }
 
-    try {
-      // Check permission
-      final PermissionState ps = await PhotoManager.requestPermissionExtend(
-        requestOption: const PermissionRequestOption(
-          iosAccessLevel: IosAccessLevel.readWrite,
-        ),
-      );
-
-      debugPrint('ImageLoaderService: Checking permission - isAuth: ${ps.isAuth}, hasAccess: ${ps.hasAccess}');
-
-      // Accept both isAuth and hasAccess
-      if (!ps.isAuth && !ps.hasAccess) {
-        debugPrint('ImageLoaderService: No permission granted, using mock data');
-        debugPrint('  - Please grant photo permissions in device settings');
-        _imageCache.addAll(_generateMockImages(9));
-        return List.unmodifiable(_imageCache);
-      }
-
-      // Get image albums
-      final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(
-        type: RequestType.image,
-        onlyAll: true,  // Get only the "All" album
-      );
-
-      if (albums.isEmpty) {
-        debugPrint('ImageLoaderService: No albums found, using mock data');
-        _imageCache.addAll(_generateMockImages(9));
-        return List.unmodifiable(_imageCache);
-      }
-
-      // Get images from first album (usually "All Photos")
-      final AssetPathEntity album = albums.first;
-      final int totalCount = await album.assetCountAsync;
-
-      debugPrint('ImageLoaderService: Found $totalCount images in gallery');
-
-      if (totalCount == 0) {
-        debugPrint('ImageLoaderService: No images found, using mock data');
-        _imageCache.addAll(_generateMockImages(9));
-        return List.unmodifiable(_imageCache);
-      }
-
-      // Load up to 1000 images
-      final int loadCount = totalCount < 1000 ? totalCount : 1000;
-      final stopwatch = Stopwatch()..start();
-
-      final List<AssetEntity> assets = await album.getAssetListRange(
-        start: 0,
-        end: loadCount,
-      );
-
-      debugPrint('ImageLoaderService: Fetched ${assets.length} asset references in ${stopwatch.elapsedMilliseconds}ms');
-
-      // OPTIMIZED: Convert AssetEntity to ImageItem WITHOUT file copy
-      // This is much faster as it uses metadata directly from MediaStore
-      for (final asset in assets) {
-        try {
-          // Use metadata directly - no file copy needed!
-          // Note: sizeBytes is skipped to avoid slow file access
-          final imageItem = ImageItem(
-            id: asset.id,
-            path: asset.relativePath ?? 'gallery/${asset.id}',
-            createdAt: asset.createDateTime,
-            modifiedAt: asset.modifiedDateTime,
-            sizeBytes: null, // Skip for speed - can be fetched lazily if needed
-            width: asset.width,
-            height: asset.height,
-          );
-
-          _imageCache.add(imageItem);
-          // Cache the asset for later byte retrieval
-          _assetCache[asset.id] = asset;
-        } catch (e) {
-          debugPrint('ImageLoaderService: Error loading asset ${asset.id}: $e');
-          continue;
-        }
-      }
-
-      stopwatch.stop();
-      debugPrint('ImageLoaderService: ✓ Loaded ${_imageCache.length} REAL images in ${stopwatch.elapsedMilliseconds}ms (optimized)');
-
-      // If we couldn't load any real images, fall back to mock
-      if (_imageCache.isEmpty) {
-        debugPrint('ImageLoaderService: Failed to load any real images, using mock data');
-        _imageCache.addAll(_generateMockImages(9));
-      }
-
-      return List.unmodifiable(_imageCache);
-    } catch (e) {
-      debugPrint('ImageLoaderService: Failed to load images: $e');
-
-      // Fall back to mock data
-      _imageCache.addAll(_generateMockImages(9));
-      return List.unmodifiable(_imageCache);
+    if (_useTestDataset) {
+      return _loadTestDatasetImages();
     }
+
+    debugPrint('ImageLoaderService: No test dataset loaded. Returning empty image list.');
+    return [];
   }
 
-  /// Refresh the image cache
+  /// Load thumbnail for a specific image.
   ///
-  /// Forces a reload of all images from device storage.
-  /// Useful when new images have been added or removed.
+  /// Returns thumbnail data as Uint8List, or null if not available.
+  Future<Uint8List?> loadThumbnail(String imageId) async {
+    final testFile = _testFileCache[imageId];
+    if (testFile != null) {
+      try {
+        return await testFile.readAsBytes();
+      } catch (e) {
+        debugPrint('ImageLoaderService: Failed to load thumbnail for $imageId: $e');
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /// Load full image bytes for a specific image.
+  ///
+  /// Returns image file data as Uint8List, or null if not available.
+  Future<Uint8List?> loadImageBytes(String imageId) async {
+    final testFile = _testFileCache[imageId];
+    if (testFile != null) {
+      try {
+        return await testFile.readAsBytes();
+      } catch (e) {
+        debugPrint('ImageLoaderService: Failed to load image for $imageId: $e');
+        return null;
+      }
+    }
+    debugPrint('ImageLoaderService: Image not found for $imageId');
+    return null;
+  }
+
+  /// Get ImageItem with thumbnail loaded.
+  Future<ImageItem> getImageWithThumbnail(String imageId) async {
+    final image = getImageById(imageId);
+    if (image == null) {
+      throw StateError('Image not found: $imageId');
+    }
+
+    if (image.thumbnail != null) {
+      return image;
+    }
+
+    final thumbnail = await loadThumbnail(imageId);
+    if (thumbnail != null) {
+      final updatedImage = image.copyWith(thumbnail: thumbnail);
+      final index = _imageCache.indexWhere((img) => img.id == imageId);
+      if (index >= 0) {
+        _imageCache[index] = updatedImage;
+      }
+      return updatedImage;
+    }
+
+    return image;
+  }
+
+  /// Refresh the image cache.
   Future<List<ImageItem>> refreshImages() async {
     _imageCache.clear();
     return loadDeviceImages();
   }
 
-  /// Get a single image by ID
-  ///
-  /// Returns the [ImageItem] if found, or `null` if not found
+  /// Get a single image by ID.
   ImageItem? getImageById(String id) {
     try {
       return _imageCache.firstWhere((image) => image.id == id);
@@ -241,238 +196,61 @@ class ImageLoaderService {
     }
   }
 
-  /// Get all loaded images
-  ///
-  /// Returns a list of all images currently in the cache.
-  /// If no images are loaded, returns an empty list.
+  /// Get all loaded images.
   List<ImageItem> getAllImages() {
     return List.unmodifiable(_imageCache);
   }
 
-  /// Check if an image file is supported
-  ///
-  /// Returns `true` if the file extension is in the supported list
+  /// Check if an image file extension is supported.
   bool isImageSupported(String path) {
     final extension = path.toLowerCase();
     return _supportedExtensions.any((ext) => extension.endsWith(ext));
   }
 
-  /// Get the raw bytes of an image
-  ///
-  /// This uses photo_manager's API to get bytes, which works correctly
-  /// on Android 10+ with scoped storage (unlike direct File access).
-  ///
-  /// Returns null if the image is not found or bytes cannot be retrieved.
-  Future<Uint8List?> getImageBytes(ImageItem image) async {
-    // First try to get from cached AssetEntity (real gallery images)
-    final asset = _assetCache[image.id];
-    if (asset != null) {
-      try {
-        final bytes = await asset.originBytes;
-        if (bytes != null) {
-          debugPrint('ImageLoaderService: Got ${bytes.length} bytes for ${image.name}');
-          return bytes;
-        }
-      } catch (e) {
-        debugPrint('ImageLoaderService: Failed to get bytes via asset: $e');
-      }
-    }
-
-    // Fallback: try direct file read (works on some platforms/older Android)
-    try {
-      final file = File(image.path);
-      if (await file.exists()) {
-        return await file.readAsBytes();
-      }
-    } catch (e) {
-      debugPrint('ImageLoaderService: Failed to get bytes via file: $e');
-    }
-
-    return null;
-  }
-
-  /// Get thumbnail bytes for an image (FAST - optimized for embedding)
-  ///
-  /// This loads a small thumbnail (224x224) instead of the full image,
-  /// which is 10-50x faster than loading the full resolution image.
-  ///
-  /// The thumbnail is cached for subsequent calls.
-  ///
-  /// Returns null if the image is not found or thumbnail cannot be retrieved.
-  Future<Uint8List?> getThumbnailBytes(ImageItem image) async {
-    // Check cache first
-    if (_thumbnailCache.containsKey(image.id)) {
-      return _thumbnailCache[image.id];
-    }
-
-    final asset = _assetCache[image.id];
-    if (asset == null) {
-      debugPrint('ImageLoaderService: Asset not found for ${image.id}');
-      return null;
-    }
-
-    try {
-      // Load thumbnail at model input size (224x224)
-      // This is MUCH faster than loading full resolution
-      final thumbnail = await asset.thumbnailDataWithSize(
-        const ThumbnailSize(thumbnailSize, thumbnailSize),
-        quality: 85,
-      );
-
-      if (thumbnail != null) {
-        // Cache the thumbnail (with LRU eviction)
-        _cacheThumbnail(image.id, thumbnail);
-        debugPrint('ImageLoaderService: Got ${thumbnail.length} byte thumbnail for ${image.id}');
-      }
-
-      return thumbnail;
-    } catch (e) {
-      debugPrint('ImageLoaderService: Failed to get thumbnail: $e');
-      return null;
-    }
-  }
-
-  /// Load thumbnails for multiple images in parallel (FAST)
-  ///
-  /// This is the fastest way to load images for embedding.
-  /// It uses parallel processing and thumbnails instead of full images.
-  ///
-  /// [images] - List of images to load thumbnails for
-  /// [batchSize] - Number of images to load concurrently (default: 5)
-  /// [onProgress] - Optional callback for progress updates
-  ///
-  /// Returns a map of image ID to thumbnail bytes.
-  /// Images that fail to load will not be in the map.
-  Future<Map<String, Uint8List>> loadThumbnailBatch(
-    List<ImageItem> images, {
-    int batchSize = defaultBatchSize,
-    void Function(int loaded, int total)? onProgress,
-  }) async {
-    final results = <String, Uint8List>{};
-    final stopwatch = Stopwatch()..start();
-
-    debugPrint('ImageLoaderService: Loading ${images.length} thumbnails in batches of $batchSize...');
-
-    // Process in parallel batches
-    for (var i = 0; i < images.length; i += batchSize) {
-      final batchEnd = (i + batchSize).clamp(0, images.length);
-      final batch = images.sublist(i, batchEnd);
-
-      // Load batch in parallel
-      final futures = batch.map((image) async {
-        final thumbnail = await getThumbnailBytes(image);
-        if (thumbnail != null) {
-          return MapEntry(image.id, thumbnail);
-        }
-        return null;
-      });
-
-      final batchResults = await Future.wait(futures);
-
-      // Collect results
-      for (final entry in batchResults) {
-        if (entry != null) {
-          results[entry.key] = entry.value;
-        }
-      }
-
-      // Report progress
-      onProgress?.call(results.length, images.length);
-    }
-
-    stopwatch.stop();
-    debugPrint(
-      'ImageLoaderService: ✓ Loaded ${results.length}/${images.length} thumbnails '
-      'in ${stopwatch.elapsedMilliseconds}ms '
-      '(${(stopwatch.elapsedMilliseconds / images.length).toStringAsFixed(1)}ms/image)',
-    );
-
-    return results;
-  }
-
-  /// Load thumbnails and return as a list matching input order
-  ///
-  /// This is convenient for batch embedding where order matters.
-  /// Returns null entries for images that failed to load.
-  Future<List<Uint8List?>> loadThumbnailBatchOrdered(
-    List<ImageItem> images, {
-    int batchSize = defaultBatchSize,
-    void Function(int loaded, int total)? onProgress,
-  }) async {
-    final thumbnailMap = await loadThumbnailBatch(
-      images,
-      batchSize: batchSize,
-      onProgress: onProgress,
-    );
-
-    return images.map((img) => thumbnailMap[img.id]).toList();
-  }
-
-  /// Cache a thumbnail with LRU eviction
-  void _cacheThumbnail(String id, Uint8List thumbnail) {
-    // Evict oldest entries if cache is full
-    while (_thumbnailCache.length >= maxThumbnailCacheSize) {
-      final oldestKey = _thumbnailCache.keys.first;
-      _thumbnailCache.remove(oldestKey);
-    }
-    _thumbnailCache[id] = thumbnail;
-  }
-
-  /// Clear the thumbnail cache to free memory
-  void clearThumbnailCache() {
-    _thumbnailCache.clear();
-    debugPrint('ImageLoaderService: Thumbnail cache cleared');
-  }
-
-  /// Get thumbnail cache statistics
-  Map<String, dynamic> getThumbnailCacheStats() {
-    final totalBytes = _thumbnailCache.values.fold<int>(
-      0,
-      (sum, bytes) => sum + bytes.length,
-    );
-    return {
-      'count': _thumbnailCache.length,
-      'maxCount': maxThumbnailCacheSize,
-      'totalBytes': totalBytes,
-      'totalMB': (totalBytes / (1024 * 1024)).toStringAsFixed(2),
-    };
-  }
-
-  /// Clear the image cache
-  ///
-  /// Use this to free up memory when images are no longer needed
+  /// Clear the image cache.
   void clearCache() {
     _imageCache.clear();
-    _assetCache.clear();
-    _thumbnailCache.clear();
+    _testFileCache.clear();
   }
 
-  /// Dispose of resources
-  ///
-  /// Call this when the service is no longer needed
+  /// Dispose of resources.
   void dispose() {
     clearCache();
     _isInitialized = false;
   }
 
-  // ========== Mock Implementation (Fallback) ==========
-  // Only used when real gallery access fails
+  /// Whether the service is using a test dataset.
+  bool get isTestDataset => _useTestDataset;
 
-  /// Generate mock images for testing when real gallery access fails
-  List<ImageItem> _generateMockImages(int count) {
-    final now = DateTime.now();
-    debugPrint('⚠️  Using MOCK images - add real photos to your device gallery!');
-    return List.generate(
-      count,
-      (index) => ImageItem(
-        id: 'mock_image_$index',
-        path: '/storage/emulated/0/DCIM/Camera/IMG_$index.jpg',
-        createdAt: now.subtract(Duration(days: index)),
-        modifiedAt: now.subtract(Duration(days: index)),
-        sizeBytes: 1024 * 1024 * (index + 1), // 1-9 MB
-        width: 1920,
-        height: 1080,
-      ),
-    );
+  // ========== Private Helpers ==========
+
+  /// Check if a directory has no files.
+  Future<bool> _isDirEmpty(Directory dir) async {
+    await for (final _ in dir.list()) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Load images from the test dataset directory.
+  Future<List<ImageItem>> _loadTestDatasetImages() async {
+    debugPrint('ImageLoaderService: Loading test dataset (${_testFileCache.length} files)...');
+
+    for (final entry in _testFileCache.entries) {
+      final id = entry.key;
+      final file = entry.value;
+      final stat = await file.stat();
+
+      _imageCache.add(ImageItem(
+        id: id,
+        path: file.path,
+        createdAt: stat.changed,
+        modifiedAt: stat.modified,
+        sizeBytes: stat.size,
+      ));
+    }
+
+    debugPrint('ImageLoaderService: Loaded ${_imageCache.length} test images');
+    return List.unmodifiable(_imageCache);
   }
 }

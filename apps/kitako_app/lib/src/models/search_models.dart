@@ -84,6 +84,10 @@ class SearchResult {
   /// List of images matching the search query
   final List<ImageItem> images;
 
+  /// Similarity scores parallel to [images] (index-aligned).
+  /// Null when scores are not available (e.g. mock backend).
+  final List<double>? scores;
+
   /// Query used for search
   final String query;
 
@@ -96,6 +100,7 @@ class SearchResult {
   const SearchResult({
     required this.images,
     required this.query,
+    this.scores,
     this.searchTimeMs,
     this.totalScanned,
   });
@@ -105,6 +110,12 @@ class SearchResult {
 
   /// Number of results found
   int get resultCount => images.length;
+
+  /// Get the similarity score for a result at [index], or null if unavailable.
+  double? scoreAt(int index) {
+    if (scores == null || index < 0 || index >= scores!.length) return null;
+    return scores![index];
+  }
 
   @override
   String toString() =>
@@ -146,13 +157,20 @@ class SearchState {
   /// Error message if search failed
   final String? error;
 
+  /// Query image thumbnail for image-to-image search
+  final Uint8List? queryImage;
+
   const SearchState({
     this.status = SearchStatus.idle,
     this.query = '',
     this.normalizedQuery,
     this.result,
     this.error,
+    this.queryImage,
   });
+
+  /// Whether this is an image-to-image search
+  bool get isImageSearch => queryImage != null;
 
   /// Creates a copy with updated fields
   SearchState copyWith({
@@ -161,6 +179,7 @@ class SearchState {
     String? normalizedQuery,
     SearchResult? result,
     String? error,
+    Uint8List? queryImage,
   }) {
     return SearchState(
       status: status ?? this.status,
@@ -168,6 +187,7 @@ class SearchState {
       normalizedQuery: normalizedQuery ?? this.normalizedQuery,
       result: result ?? this.result,
       error: error ?? this.error,
+      queryImage: queryImage ?? this.queryImage,
     );
   }
 
@@ -184,5 +204,5 @@ class SearchState {
   bool get hasResults => result?.hasResults ?? false;
 
   @override
-  String toString() => 'SearchState(status: $status, query: $query)';
+  String toString() => 'SearchState(status: $status, query: $query, isImageSearch: $isImageSearch)';
 }

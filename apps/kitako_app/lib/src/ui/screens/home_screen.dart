@@ -1,22 +1,22 @@
-import 'dart:typed_data';
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
+import 'alpha_test_screen.dart';
+import 'details_screen.dart';
 import '../theme/theme_notifier.dart';
 import '../../services/image_search_service.dart';
-import '../../services/image_loader_service.dart';
 import '../../models/search_models.dart';
 
 class HomeScreen extends StatefulWidget {
   final ThemeNotifier themeNotifier;
   final ImageSearchService searchService;
-  final ImageLoaderService? imageLoaderService;
 
   const HomeScreen({
     super.key,
     required this.themeNotifier,
     required this.searchService,
-    this.imageLoaderService,
   });
 
   @override
@@ -25,88 +25,43 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<ImageItem> _images = [];
-  final Map<String, Uint8List> _thumbnailCache = {};
-  bool _loadingThumbnails = false;
-  ImageLoaderService? _imageLoader;
+  StreamSubscription<List<ImageItem>>? _imagesSubscription;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _loadImages();
+    _listenForImageUpdates();
+  }
+
+  @override
+  void dispose() {
+    _imagesSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _listenForImageUpdates() {
+    _imagesSubscription = widget.searchService.imagesLoadedStream.listen((images) {
+      debugPrint('HomeScreen: Received ${images.length} images from stream');
+      if (mounted) {
+        setState(() {
+          _images = images;
+          _isLoading = false;
+        });
+      }
+    });
   }
 
   Future<void> _loadImages() async {
     final images = widget.searchService.getAllImages();
+    debugPrint('HomeScreen: Initial load found ${images.length} images');
     if (mounted) {
       setState(() {
         _images = images;
+        _isLoading = images.isEmpty; // Only show loading if no images yet
       });
-      // Load thumbnails for display
-      _loadThumbnails();
     }
-  }
-
-  Future<void> _loadThumbnails() async {
-    if (_loadingThumbnails || _images.isEmpty) return;
-    _loadingThumbnails = true;
-
-    // Get the image loader service
-    _imageLoader = widget.imageLoaderService ?? ImageLoaderService();
-    if (widget.imageLoaderService == null) {
-      await _imageLoader!.initialize();
-      // Load images if not already loaded
-      await _imageLoader!.loadDeviceImages();
-    }
-
-    // Load thumbnails in batches for visible images
-    final batchSize = 10;
-    for (var i = 0; i < _images.length; i += batchSize) {
-      if (!mounted) break;
-
-      final batch = _images.skip(i).take(batchSize).toList();
-      final thumbnails = await _imageLoader!.loadThumbnailBatch(batch, batchSize: 5);
-
-      if (mounted) {
-        setState(() {
-          _thumbnailCache.addAll(thumbnails);
-        });
-      }
-    }
-
-    _loadingThumbnails = false;
-  }
-
-  Widget _buildPlaceholder(bool isDark, String name) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.image_outlined,
-            color: isDark
-                ? Colors.white.withOpacity(0.3)
-                : Colors.black.withOpacity(0.3),
-            size: 40,
-          ),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Text(
-              name,
-              style: TextStyle(
-                color: isDark
-                    ? Colors.white.withOpacity(0.5)
-                    : Colors.black.withOpacity(0.5),
-                fontSize: 10,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   void _openSearch() {
@@ -142,6 +97,100 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openDetails(ImageItem image, int index) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => DetailsScreen(
+          image: image,
+          searchService: widget.searchService,
+          imageList: _images,
+          currentIndex: index,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _findSimilar(ImageItem image) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+            SizedBox(width: 16),
+            Text('Finding similar images...'),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+
+    try {
+      await widget.searchService.searchByImageId(image.id);
+      if (!mounted) return;
+      _openSearch();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to find similar images: $e'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildPlaceholder(ImageItem image, bool isDark) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.image_outlined,
+            color: isDark ? Colors.white24 : Colors.black26,
+            size: 40,
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              image.name,
+              style: TextStyle(
+                color: isDark ? Colors.white38 : Colors.black38,
+                fontSize: 10,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openAlphaTest() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) =>
+            AlphaTestScreen(searchService: widget.searchService),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -150,6 +199,16 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Search'),
         actions: [
+          // Alpha Testing button
+          IconButton(
+            icon: Icon(
+              Icons.science_outlined,
+              color: Colors.amber,
+              size: 28,
+            ),
+            tooltip: 'Alpha Testing',
+            onPressed: _openAlphaTest,
+          ),
           IconButton(
             icon: Icon(
               Icons.settings_outlined,
@@ -169,13 +228,28 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.all(16.0),
               child: _images.isEmpty
                   ? Center(
-                      child: Text(
-                        'No images found',
-                        style: TextStyle(
-                          color: isDark ? Colors.white70 : Colors.black54,
-                          fontSize: 16,
-                        ),
-                      ),
+                      child: _isLoading
+                          ? Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const CircularProgressIndicator(),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Loading gallery...',
+                                  style: TextStyle(
+                                    color: isDark ? Colors.white70 : Colors.black54,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Text(
+                              'No images found',
+                              style: TextStyle(
+                                color: isDark ? Colors.white70 : Colors.black54,
+                                fontSize: 16,
+                              ),
+                            ),
                     )
                   : GridView.builder(
                       gridDelegate:
@@ -188,26 +262,29 @@ class _HomeScreenState extends State<HomeScreen> {
                       itemCount: _images.length,
                       itemBuilder: (context, index) {
                         final image = _images[index];
-                        final thumbnail = _thumbnailCache[image.id];
-
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? const Color(0xFF2A2A2A)
-                                : const Color(0xFFE0E0E0),
+                        return Material(
+                          color: isDark
+                              ? const Color(0xFF2A2A2A)
+                              : const Color(0xFFE0E0E0),
+                          borderRadius: BorderRadius.circular(8),
+                          child: InkWell(
+                            onTap: () => _openDetails(image, index),
+                            onLongPress: () => _findSimilar(image),
                             borderRadius: BorderRadius.circular(8),
+                            splashColor: isDark ? Colors.white12 : Colors.black12,
+                            highlightColor: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.1),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: image.thumbnail != null
+                                  ? Image.memory(
+                                      image.thumbnail!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          _buildPlaceholder(image, isDark),
+                                    )
+                                  : _buildPlaceholder(image, isDark),
+                            ),
                           ),
-                          clipBehavior: Clip.antiAlias,
-                          child: thumbnail != null
-                              ? Image.memory(
-                                  thumbnail,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      _buildPlaceholder(isDark, image.name),
-                                )
-                              : _buildPlaceholder(isDark, image.name),
                         );
                       },
                     ),

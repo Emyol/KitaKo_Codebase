@@ -11,16 +11,14 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _titleColour = false;
-  bool _highlightColour = false;
-  bool _systemSetting1 = false;
-  bool _systemSetting2 = false;
-  bool _systemSetting3 = false;
+  /// false = Performance (IVF-PQ), true = Accuracy (HNSW)
+  bool _useAccuracyMode = false;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : Colors.black87;
+    final subtitleColor = isDark ? Colors.white60 : Colors.black54;
 
     return Scaffold(
       appBar: AppBar(
@@ -55,35 +53,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             isDark,
             textColor,
           ),
-          const SizedBox(height: 12),
-          _buildSettingTile(
-            'Title colour',
-            _titleColour,
-            (value) {
-              setState(() {
-                _titleColour = value;
-              });
-            },
-            isDark,
-            textColor,
-          ),
-          const SizedBox(height: 12),
-          _buildSettingTile(
-            'Highlight colour',
-            _highlightColour,
-            (value) {
-              setState(() {
-                _highlightColour = value;
-              });
-            },
-            isDark,
-            textColor,
-          ),
           const SizedBox(height: 32),
 
-          // System Section
+          // Search Section
           Text(
-            'System',
+            'Search',
             style: TextStyle(
               color: textColor,
               fontSize: 20,
@@ -91,42 +65,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          _buildSettingTile(
-            'System setting 1',
-            _systemSetting1,
-            (value) {
-              setState(() {
-                _systemSetting1 = value;
-              });
-            },
-            isDark,
-            textColor,
+          _buildSearchModeTile(isDark, textColor, subtitleColor),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchModeTile(bool isDark, Color textColor, Color subtitleColor) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? const Color(0xFF3A3A3A) : const Color(0xFFE0E0E0),
+          width: 1,
+        ),
+        boxShadow: isDark
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Search mode',
+            style: TextStyle(color: textColor, fontSize: 16),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _useAccuracyMode
+                ? 'Accuracy mode uses HNSW for higher recall'
+                : 'Performance mode uses IVF-PQ for faster search',
+            style: TextStyle(color: subtitleColor, fontSize: 13),
           ),
           const SizedBox(height: 12),
-          _buildSettingTile(
-            'System setting 2',
-            _systemSetting2,
-            (value) {
-              setState(() {
-                _systemSetting2 = value;
-              });
-            },
-            isDark,
-            textColor,
-          ),
-          const SizedBox(height: 12),
-          _buildSettingTile(
-            'System setting 3',
-            _systemSetting3,
-            (value) {
-              setState(() {
-                _systemSetting3 = value;
-              });
-            },
-            isDark,
-            textColor,
+          Row(
+            children: [
+              Expanded(
+                child: _buildModeButton(
+                  label: 'Performance',
+                  subtitle: 'IVF-PQ',
+                  icon: Icons.speed,
+                  selected: !_useAccuracyMode,
+                  onTap: () => setState(() => _useAccuracyMode = false),
+                  isDark: isDark,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildModeButton(
+                  label: 'Accuracy',
+                  subtitle: 'HNSW',
+                  icon: Icons.gps_fixed,
+                  selected: _useAccuracyMode,
+                  onTap: () => setState(() => _useAccuracyMode = true),
+                  isDark: isDark,
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildModeButton({
+    required String label,
+    required String subtitle,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+    required bool isDark,
+  }) {
+    final selectedBg = const Color(0xFF4A90E2);
+    final unselectedBg = isDark ? const Color(0xFF3A3A3A) : const Color(0xFFF0F0F0);
+    final selectedFg = Colors.white;
+    final unselectedFg = isDark ? Colors.white70 : Colors.black87;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+        decoration: BoxDecoration(
+          color: selected ? selectedBg : unselectedBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? selectedBg : (isDark ? const Color(0xFF555555) : const Color(0xFFD0D0D0)),
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: selected ? selectedFg : unselectedFg, size: 24),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? selectedFg : unselectedFg,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: selected ? selectedFg.withValues(alpha: 0.8) : unselectedFg.withValues(alpha: 0.6),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -151,7 +208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ? null
             : [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 4,
                   offset: const Offset(0, 2),
                 ),
@@ -164,8 +221,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: const Color(0xFF4A90E2),
-            activeTrackColor: const Color(0xFF5BA3F5).withOpacity(0.5),
+            activeThumbColor: const Color(0xFF4A90E2),
+            activeTrackColor: const Color(0xFF5BA3F5).withValues(alpha: 0.5),
             inactiveThumbColor: isDark
                 ? const Color(0xFF666666)
                 : const Color(0xFF999999),

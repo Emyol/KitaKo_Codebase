@@ -222,6 +222,13 @@ const Map<String, String> normalizationDictionary = {
   'npapakinggan': 'napapakinggan',
   'nttwa': 'natatawa',
 
+  // Tagalog → English translations (demo vocabulary)
+  'pusa': 'cat',
+  'aso': 'dog',
+  'lalaki': 'guy',
+  'lalake': 'guy',
+  'kain': 'eating',
+
   // English shorthand / numeric substitutions
   'bcos': 'because',
   'bcoz': 'because',
@@ -235,3 +242,4 @@ const Map<String, String> normalizationDictionary = {
   'morng': 'morning',
   'n0body': 'nobody',
 };
+
