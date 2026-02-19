@@ -183,6 +183,71 @@ class InvertedFile {
     return candidates.take(k).toList();
   }
 
+  /// Searches with diagnostic metrics for IVF-PQ optimization
+  ///
+  /// Returns results plus detailed metrics about the search:
+  /// - clustersProbed: how many non-empty clusters were actually searched
+  /// - distanceComputations: total PQ distance lookups performed
+  /// - totalCandidatesInProbedClusters: total vectors in probed clusters
+  /// - probedClusterSizes: size of each probed cluster
+  ({
+    List<(int id, double distance)> results,
+    int clustersProbed,
+    int distanceComputations,
+    int totalCandidatesInProbedClusters,
+    List<int> probedClusterSizes,
+  }) searchWithMetrics(
+    Float32List query, {
+    required int k,
+    required int nprobe,
+  }) {
+    _checkTrained();
+    if (query.length != dimension) {
+      throw ArgumentError(
+        'Query dimension ${query.length} != expected $dimension',
+      );
+    }
+    if (nprobe > numClusters) {
+      nprobe = numClusters;
+    }
+
+    final nearestClusters = _coarseQuantizer!.predictTopK(query, nprobe);
+
+    final candidates = <(int id, double distance)>[];
+    int distanceComputations = 0;
+    int totalCandidatesInProbedClusters = 0;
+    final probedClusterSizes = <int>[];
+    int actualClustersProbed = 0;
+
+    for (final clusterId in nearestClusters) {
+      final clusterSize = _invertedLists[clusterId].length;
+      probedClusterSizes.add(clusterSize);
+      if (clusterSize == 0) continue;
+
+      actualClustersProbed++;
+      totalCandidatesInProbedClusters += clusterSize;
+
+      final residualQuery = _computeResidual(query, clusterId);
+      final distTable = _pq!.computeDistanceTable(residualQuery);
+
+      for (final entry in _invertedLists[clusterId]) {
+        final distance = _pq!.computeAsymmetricDistance(distTable, entry.codes);
+        candidates.add((entry.id, distance));
+        distanceComputations++;
+      }
+    }
+
+    candidates.sort((a, b) => a.$2.compareTo(b.$2));
+
+    return (
+      results: candidates.take(k).toList(),
+      clustersProbed: actualClustersProbed,
+      distanceComputations: distanceComputations,
+      totalCandidatesInProbedClusters: totalCandidatesInProbedClusters,
+      probedClusterSizes: probedClusterSizes,
+    );
+  }
+
   /// Serializes the inverted file to bytes
   Uint8List serialize() {
     _checkTrained();

@@ -69,6 +69,9 @@ class KitakoFfi {
   final Map<int, _StubHandle> _handles = {};
   int _nextHandleId = 1;
 
+  /// Whether ANN functions are available (always false for web stub)
+  bool get isAnnAvailable => false;
+
   /// Returns a deterministic dummy embedding for platforms without FFI.
   Float32List dummyEmbedding768() {
     final out = Float32List(768);
@@ -226,5 +229,26 @@ class KitakoFfi {
   void annSave(dynamic handle, String indexPath) {
     throw UnsupportedError('ANN index saving is not supported on web.');
   }
+
+  // Metrics API stubs
+
+  /// Stub: returns item count (brute force = all items visited).
+  int annGetDistanceComputations(dynamic handle) {
+    final handleId = handle as int;
+    final stub = _handles[handleId];
+    return stub?.items.length ?? -1;
+  }
+
+  /// Stub: returns 0 hops (brute force has no graph traversal).
+  int annGetHops(dynamic handle) => 0;
+
+  /// Stub: no-op.
+  void annResetMetrics(dynamic handle) {}
+
+  /// Stub: returns -1 (no ef parameter in brute force).
+  int annGetEf(dynamic handle) => -1;
+
+  /// Stub: returns -1 (no graph levels in brute force).
+  int annGetMaxLevel(dynamic handle) => -1;
 }
 

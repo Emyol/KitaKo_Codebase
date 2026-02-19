@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'src/ui/screens/startup_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/services/image_search_service.dart';
+import 'src/services/model_download_service.dart';
+import 'src/ui/widgets/model_download_gate.dart';
 
 /// KitaKo - Image Retrieval Mobile Application
 /// Platform: Android & iOS
@@ -15,6 +17,9 @@ void main() {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+
+  // Print model setup instructions for development
+  ModelDownloadService().printModelSetupInstructions();
 
   runApp(const KitaKoApp());
 }
@@ -125,8 +130,9 @@ class _KitaKoAppState extends State<KitaKoApp> {
               ),
             ),
           ),
-          home: Builder(
-            builder: (context) => StartupScreen(
+          home: ModelDownloadGate(
+            autoDownload: true, // Auto-download on first launch
+            child: StartupScreen(
               themeNotifier: _themeNotifier,
               searchService: _searchService,
             ),

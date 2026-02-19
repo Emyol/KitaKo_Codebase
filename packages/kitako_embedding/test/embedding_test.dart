@@ -39,7 +39,7 @@ void main() {
         expect(tokenizer.vocabSize, greaterThan(0));
 
         // Test encoding
-        final tokens = tokenizer.encode('Fuck you Ric Ian');
+        final tokens = tokenizer.encode('Hello Marcus');
         expect(tokens.length, SiglipTokenizer.maxLength); // Should be padded to 64
         expect(tokens, isA<List<int>>());
 
@@ -62,7 +62,7 @@ void main() {
         () => inference.embedText([1, 2, 3]),
         throwsA(isA<StateError>()),
       );
-    });
+  });
 
     test('embedImage throws when model not loaded', () {
       final inference = SiglipInference();

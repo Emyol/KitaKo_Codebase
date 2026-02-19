@@ -10,8 +10,149 @@ KitaKo enables **natural language image search** with support for **Taglish** (T
 
 - 🔍 **Semantic Search** - Find images by meaning, not just keywords
 - 🇵🇭 **Taglish Support** - Normalizes mixed Tagalog-English queries
-- ⚡ **On-Device ML** - TensorFlow Lite inference, no server needed
-- 🚀 **Fast ANN Search** - Native HNSW via FFI for millisecond retrieval
+- ⚡ **On-Device ML** - ONNX Runtime inference, no server needed
+- 🚀 **Fast ANN Search** - IVF-PQ (pure Dart) + native HNSW via FFI
+- 📱 **Multi-Model** - Toggle between SigLIP-1, SigLIP-2, and fine-tuned variants at runtime
+
+---
+
+## System Status Report
+
+> **Report Date:** February 15, 2026
+
+### Current Capabilities
+
+#### 1. Taglish Text Normalization ✅
+The system includes a fully functional 10-step Taglish normalization pipeline:
+- **120+ abbreviation expansions** — Filipino text speak mapped to formal words (e.g., `aq` → `ako`, `bkt` → `bakit`, `kc` → `kasi`)
+- **"nag-" verb extraction** — Handles Taglish verb construction (e.g., `nagshopping` → `shopping`) across 73 English verbs
+- **Reduplication preservation** — Recognizes 29 valid Tagalog reduplication pairs (e.g., `halo halo`, `dahan dahan`, `sari sari`)
+- **Character normalization** — Collapse repeated characters, normalize whitespace, strip extraneous punctuation
+
+#### 2. SigLIP Embedding Generation ✅
+On-device ML inference using ONNX Runtime (768-dimensional embeddings):
+
+| Model Version | Vocab Size | Status | Deployment |
+|---------------|-----------|--------|------------|
+| SigLIP-1 Quantized | 32,000 | Auto-downloadable (~210 MB from HuggingFace) | Automatic |
+| SigLIP-1 Aligned | 32,000 | Available (~775 MB) | Manual (ADB push) |
+| SigLIP-2 FP32 | 256,000 | Available (~1.5 GB) | Manual (ADB push) |
+| Fine-tuned SigLIP | 256,000 | Available (~1.4 GB) | Manual (ADB push) |
+
+- **Cascading model initialization** — Tries models in priority order (Fine-tuned → Aligned → SigLIP-2 → SigLIP-1 → Mock fallback)
+- **Runtime model switching** — Switch between model versions without app restart
+- **Image preprocessing** — Decode, resize to 224×224, normalize to [-1, 1], NHWC→NCHW conversion
+- **Text tokenization** — BPE/SentencePiece tokenizer supporting both 32K and 256K vocabularies
+- **LRU embedding cache** — 100-entry cache for repeated queries
+
+#### 3. Approximate Nearest Neighbor Search ✅
+Two search algorithms available:
+
+| Algorithm | Implementation | Best For |
+|-----------|---------------|----------|
+| **IVF-PQ** | Pure Dart | Primary search (>100 images); no native dependencies |
+| **HNSW** | Native C++ (via FFI) | High-performance search; requires compiled native library |
+| **Brute-Force** | Pure Dart | Automatic fallback for ≤100 images; exact results |
+
+IVF-PQ defaults for 768-dim SigLIP embeddings: 32 clusters, 48 subquantizers, 256 centroids/SQ, 8 probes.
+
+#### 4. Device Photo Indexing ✅
+- Indexes up to **1,000 device photos** automatically on app launch
+- Parallel batch processing (10 images concurrently) using thumbnails for speed
+- Re-indexes after model switch
+- Reactive state updates via Dart streams
+
+#### 5. Search Modes ✅
+- **Text-to-Image** — Type a natural language query (English, Tagalog, or Taglish)
+- **Image-to-Image** — Select a photo and find visually similar images via `image_picker`
+
+#### 6. User Interface ✅
+- **Startup Screen** — Animated splash with fade-in logo
+- **Home Screen** — 3-column gallery grid of indexed images with search bar
+- **Search Screen** — Text input + image picker, normalized query display, results grid with rank badges
+- **Results Screen** — 2-column results with query header, result count, and search timing
+- **Details Screen** — Full-size image viewer with pinch zoom, metadata panel (name, path, size, dimensions, dates), share functionality, prev/next navigation
+- **Settings Screen** — Dark/light theme toggle
+- **Model Download Gate** — First-run model download UI with progress bar and "Demo Mode" skip option
+- **Alpha Test Screen** — IVF-PQ parameter tuning and accuracy benchmarking tools
+
+#### 7. Model Management ✅
+- **Auto-download** SigLIP-1 quantized models from HuggingFace on first launch
+- **ADB push support** — Detects models pushed to `/data/local/tmp/` on Android
+- **Size-based integrity verification** (±5% tolerance)
+- **Cache management** — Clear downloaded models, report cache size
+
+---
+
+### Known Limitations
+
+#### Embedding Quality Issue ⚠️
+The most critical known issue: **search results may be semantically irrelevant**. The publicly available Xenova ONNX model exports are missing projection layers, which means vision and text embeddings exist in **different vector spaces**. This results in near-random cosine similarities (~2.0 L2 distance for normalized vectors). A corrected export script exists at `tools/python/export/export_siglip_with_projection.py` but has not been run to produce fixed models.
+
+#### Incomplete UI Features
+| Feature | Status |
+|---------|--------|
+| Similarity score display | Shows mock percentages (hardcoded), not real scores |
+| Image deletion | UI dialog exists but does not delete |
+| Open containing folder | Stub only (shows snackbar) |
+| Grid/list view toggle | Button present but non-functional |
+| Settings beyond dark mode | Toggle switches are visual stubs |
+
+#### Platform Support
+
+| Platform | Gallery Access | ML Inference | ANN Search | Overall |
+|----------|---------------|-------------|------------|---------|
+| **Android** | ✅ Real photos | ✅ ONNX Runtime | ✅ IVF-PQ | **Full support** |
+| **iOS** | ✅ Real photos | ✅ ONNX Runtime | ✅ IVF-PQ | **Full support** |
+| **Windows** | ⚠️ Mock images | ⚠️ Depends on native libs | ✅ IVF-PQ | **Partial** |
+| **macOS/Linux** | ⚠️ Mock images | ⚠️ Depends on native libs | ✅ IVF-PQ | **Partial** |
+| **Web** | ❌ Mock only | ❌ Stubbed out | ❌ Stubbed out | **Mock mode only** |
+
+---
+
+### Use Cases
+
+#### Primary Use Case: Taglish Photo Search
+A Filipino user searches their phone gallery using natural mixed-language queries:
+- `"kumakain sa beach"` (eating at the beach)
+- `"nagshopping kami"` (we went shopping)
+- `"red dress sa party"` (red dress at a party)
+- `"aso sa park"` (dog at the park)
+
+The normalizer converts informal abbreviations to searchable text, the embedding model encodes the query into a vector, and the ANN index returns the most visually relevant photos from the device gallery.
+
+#### Secondary Use Case: Image-to-Image Similarity
+A user selects a photo and finds similar-looking images within their gallery (visual similarity search using the vision encoder to embed both the query image and gallery images).
+
+#### Research / Alpha Testing Use Case
+Developers and researchers can:
+- Benchmark IVF-PQ vs brute-force recall at various parameter settings
+- Tune ANN parameters (numProbes, clusters, subquantizers) in real-time
+- Compare embedding quality across SigLIP-1, SigLIP-2, and fine-tuned models
+- Test normalization quality on Taglish inputs via the debug/alpha test screens
+
+#### Offline / Privacy Use Case
+All inference runs on-device — no images or queries are sent to any server. This makes KitaKo suitable for privacy-sensitive photo collections where cloud-based search is not acceptable.
+
+---
+
+### Component Status Summary
+
+| Component | Package | Status | Notes |
+|-----------|---------|--------|-------|
+| Taglish Normalizer | `kitako_normalizer` | ✅ Working | 120+ mappings, 73 verbs, 29 reduplication pairs |
+| SigLIP Tokenizer | `kitako_embedding` | ✅ Working | 32K and 256K vocab support |
+| Image Preprocessor | `kitako_embedding` | ✅ Working | Resize + normalize + format conversion |
+| ONNX Inference | `kitako_embedding` | ⚠️ Partial | Runs but needs fixed projection-layer models |
+| IVF-PQ Search | `kitako_ann` | ✅ Working | Pure Dart, tested, benchmarkable |
+| HNSW Search | `kitako_ann` + `kitako_ffi` | ✅ Available | Native FFI; not used by app (IVF-PQ preferred) |
+| Brute-Force Search | `kitako_ann` | ✅ Working | Exact NN; auto-selected for ≤100 images |
+| Model Download | App services | ✅ Working | Auto-download SigLIP-1; manual setup for others |
+| Photo Gallery | App services | ✅ Working | Android/iOS real photos; desktop/web mock |
+| Search UI | App UI | ✅ Working | Text + image search with results grid |
+| Image Viewer | App UI | ✅ Working | Full-size zoom, metadata, share, navigation |
+| Theme System | App UI | ✅ Working | Dark/light toggle with Material 3 |
+| Shared Types | `kitako_core` | ✅ Working | EmbeddingVector, AnnResult, error hierarchy |
 
 ---
 
@@ -20,20 +161,46 @@ KitaKo enables **natural language image search** with support for **Taglish** (T
 ```
 KitaKo_System/
 ├── apps/
-│   └── kitako_app/          # Main Flutter application
+│   └── kitako_app/              # Main Flutter application
+│       ├── lib/
+│       │   ├── main.dart        # App entry point
+│       │   └── src/
+│       │       ├── bootstrap/   # App initialization
+│       │       ├── models/      # View models / data classes
+│       │       ├── services/    # Business logic services
+│       │       ├── state/       # State management (providers, controllers)
+│       │       ├── ui/
+│       │       │   ├── screens/ # All app screens
+│       │       │   ├── theme/   # Theming (colors, dark mode)
+│       │       │   └── widgets/ # Reusable UI components
+│       │       └── utils/       # Logging, exceptions, perf
+│       ├── assets/              # Runtime-bundled assets only
+│       └── test/
 ├── packages/
-│   ├── kitako_core/         # Shared models and utilities
-│   ├── kitako_normalizer/   # Taglish text normalization
-│   ├── kitako_embedding/    # SigLIP embedding service (TFLite)
-│   ├── kitako_ann/          # ANN search service (HNSW)
-│   └── kitako_ffi/          # Native FFI bindings (hnswlib)
-├── assets/
-│   ├── models/              # Source ML models
-│   │   ├── image_encoder/   # SigLIP image encoder
-│   │   ├── text_encoder/    # SigLIP text encoder
-│   │   └── tokenizer/       # Tokenizer files
-│   └── indexes/             # Prebuilt ANN indexes
-└── tools/                   # CLI utilities
+│   ├── kitako_core/             # Shared types (EmbeddingVector, AnnResult, errors)
+│   ├── kitako_normalizer/       # Taglish text normalization
+│   ├── kitako_embedding/        # SigLIP inference (TFLite + ONNX)
+│   ├── kitako_ann/              # ANN search (HNSW + IVF-PQ)
+│   └── kitako_ffi/              # Native FFI bindings (hnswlib C++)
+├── assets/                      # Shared model/data files (gitignored large files)
+│   ├── models/
+│   │   ├── tokenizer/
+│   │   ├── image_encoder/
+│   │   ├── text_encoder/
+│   │   └── onnx/               # ONNX model iterations (gitignored)
+│   ├── metadata/
+│   └── test_images/             # Test image sets (gitignored)
+├── tools/
+│   ├── dart/                    # Dart CLI tools (index builder, tokenizer checks)
+│   └── python/
+│       ├── export/              # Model export scripts
+│       ├── test/                # Model validation/testing
+│       └── utils/               # Conversion, quantization, inspection
+├── docs/
+│   ├── architecture/            # System design, handoff notes, requirements
+│   ├── guides/                  # SigLIP setup, model toggle instructions
+│   └── development/             # App setup, mobile tips, screen flow
+└── dataset/                     # Training/test datasets (gitignored)
 ```
 
 ---
@@ -74,12 +241,6 @@ The embedding service requires the TensorFlow Lite C library:
 2. **Place in blobs folder**:
    ```
    apps/kitako_app/blobs/libtensorflowlite_c-win.dll
-   ```
-
-3. **Or run setup script**:
-   ```powershell
-   cd apps/kitako_app
-   .\setup_tflite.ps1
    ```
 
 #### Android
@@ -266,7 +427,7 @@ To index your own images:
 
 ```bash
 cd tools
-dart run build_index.dart --images /path/to/images --output ../assets/index/
+dart run dart/build_index.dart --images /path/to/images --output ../assets/indexes/
 ```
 
 This generates:
@@ -358,11 +519,13 @@ dart analyze
 |-----------|------------|
 | Framework | Flutter 3.x |
 | Language | Dart 3.x |
-| ML Runtime | TensorFlow Lite |
-| Embeddings | SigLIP (768-dim) |
-| ANN Search | HNSW (hnswlib) |
+| ML Runtime | ONNX Runtime (primary), TensorFlow Lite (legacy) |
+| Embeddings | SigLIP / SigLIP-2 (768-dim) |
+| ANN Search | IVF-PQ (pure Dart, primary), HNSW (native C++ via FFI) |
 | FFI | dart:ffi + ffigen |
 | UI | Material Design 3 |
+| Gallery | photo_manager |
+| Tokenizer | BPE/SentencePiece (HuggingFace format) |
 
 ---
 
@@ -372,4 +535,4 @@ Proprietary - All rights reserved.
 
 ---
 
-**Last Updated**: January 27, 2026
+**Last Updated**: February 15, 2026

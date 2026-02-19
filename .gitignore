@@ -37,3 +37,44 @@ pubspec.lock
 
 # But keep specific DLLs that are needed
 !packages/kitako_ann/kitako_ffi.dll
+
+# Large model/asset files
+assets/models/*.onnx
+assets/models/onnx/
+assets/indexes/
+dataset/images/
+
+# App-specific large assets
+apps/kitako_app/assets/models/*.onnx
+apps/kitako_app/assets/model/**/*.tflite
+
+# Python virtual environments
+.venv/
+**/venv/
+
+# Large ONNX model folders in tools
+tools/onnx_models_complete/
+tools/onnx_models_correct/
+tools/onnx_models_quantized/
+tools/xenova_models/
+
+# Test images
+assets/test_images/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Jupyter notebooks (large, contain embedded outputs)
+*.ipynb
+
+# Blobs (app binary cache)
+apps/kitako_app/blobs/
+
+# Large tokenizer files (>10MB)
+apps/kitako_app/assets/model/merged_epoch8_step6024/tokenizer.json
+
+# Windows reserved filename artifact
+nul
+
+# Claude AI config (personal)
+.claude/

@@ -1,6 +1,9 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
+import 'alpha_test_screen.dart';
 import '../theme/theme_notifier.dart';
 import '../../services/image_search_service.dart';
 import '../../models/search_models.dart';
@@ -21,18 +24,41 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<ImageItem> _images = [];
+  StreamSubscription<List<ImageItem>>? _imagesSubscription;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _loadImages();
+    _listenForImageUpdates();
+  }
+
+  @override
+  void dispose() {
+    _imagesSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _listenForImageUpdates() {
+    _imagesSubscription = widget.searchService.imagesLoadedStream.listen((images) {
+      debugPrint('HomeScreen: Received ${images.length} images from stream');
+      if (mounted) {
+        setState(() {
+          _images = images;
+          _isLoading = false;
+        });
+      }
+    });
   }
 
   Future<void> _loadImages() async {
     final images = widget.searchService.getAllImages();
+    debugPrint('HomeScreen: Initial load found ${images.length} images');
     if (mounted) {
       setState(() {
         _images = images;
+        _isLoading = images.isEmpty; // Only show loading if no images yet
       });
     }
   }
@@ -70,6 +96,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openAlphaTest() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) =>
+            AlphaTestScreen(searchService: widget.searchService),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -78,6 +113,16 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Search'),
         actions: [
+          // Alpha Testing button
+          IconButton(
+            icon: Icon(
+              Icons.science_outlined,
+              color: Colors.amber,
+              size: 28,
+            ),
+            tooltip: 'Alpha Testing',
+            onPressed: _openAlphaTest,
+          ),
           IconButton(
             icon: Icon(
               Icons.settings_outlined,
@@ -97,13 +142,28 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.all(16.0),
               child: _images.isEmpty
                   ? Center(
-                      child: Text(
-                        'No images found',
-                        style: TextStyle(
-                          color: isDark ? Colors.white70 : Colors.black54,
-                          fontSize: 16,
-                        ),
-                      ),
+                      child: _isLoading
+                          ? Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const CircularProgressIndicator(),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Loading gallery...',
+                                  style: TextStyle(
+                                    color: isDark ? Colors.white70 : Colors.black54,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Text(
+                              'No images found',
+                              style: TextStyle(
+                                color: isDark ? Colors.white70 : Colors.black54,
+                                fontSize: 16,
+                              ),
+                            ),
                     )
                   : GridView.builder(
                       gridDelegate:

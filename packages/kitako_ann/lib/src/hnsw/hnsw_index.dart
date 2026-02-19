@@ -167,6 +167,64 @@ class HnswAnnIndex extends AnnIndex with AnnIndexValidation {
     }
   }
 
+  /// Gets the current ef parameter value
+  int getEfSearch() {
+    if (_handle != null && _ffi != null) {
+      return _ffi!.annGetEf(_handle!);
+    }
+    return -1;
+  }
+
+  /// Resets distance computation and hop counters to zero.
+  /// Call before search to get per-search metrics.
+  void resetMetrics() {
+    if (_handle != null && _ffi != null) {
+      _ffi!.annResetMetrics(_handle!);
+    }
+  }
+
+  /// Gets the number of distance computations in the last search.
+  /// Compare with [size] to see if HNSW is doing approximate search
+  /// (distComps << size) or brute force (distComps >= size).
+  int getDistanceComputations() {
+    if (_handle != null && _ffi != null) {
+      return _ffi!.annGetDistanceComputations(_handle!);
+    }
+    return -1;
+  }
+
+  /// Gets the number of graph hops in the last search.
+  int getHops() {
+    if (_handle != null && _ffi != null) {
+      return _ffi!.annGetHops(_handle!);
+    }
+    return -1;
+  }
+
+  /// Gets the maximum level (number of layers) in the HNSW graph.
+  int getMaxLevel() {
+    if (_handle != null && _ffi != null) {
+      return _ffi!.annGetMaxLevel(_handle!);
+    }
+    return -1;
+  }
+
+  /// Searches with metrics tracking and returns both results and metrics.
+  Future<({List<AnnSearchResult> results, int distanceComputations, int hops, int efUsed})>
+      searchWithMetrics(Float32List query, int k) async {
+    validateReady();
+    validateQuery(query);
+    validateK(k);
+
+    resetMetrics();
+    final results = await search(query, k);
+    final distComps = getDistanceComputations();
+    final hops = getHops();
+    final ef = getEfSearch();
+
+    return (results: results, distanceComputations: distComps, hops: hops, efUsed: ef);
+  }
+
   @override
   void dispose() {
     _cleanup();
