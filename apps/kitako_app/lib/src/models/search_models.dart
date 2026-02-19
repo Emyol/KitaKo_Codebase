@@ -206,3 +206,24 @@ class SearchState {
   @override
   String toString() => 'SearchState(status: $status, query: $query, isImageSearch: $isImageSearch)';
 }
+
+/// Search result paired with its cosine similarity score.
+///
+/// Returned by [ANNSearchService.searchSimilarWithScores] for evaluation
+/// and alpha-testing workflows that need to inspect raw scores.
+class SearchResultWithScore {
+  /// The matched image.
+  final ImageItem image;
+
+  /// Cosine similarity in [0, 1] for normalized SigLIP embeddings.
+  final double similarity;
+
+  const SearchResultWithScore({
+    required this.image,
+    required this.similarity,
+  });
+
+  @override
+  String toString() =>
+      'SearchResultWithScore(${image.name}, similarity: ${similarity.toStringAsFixed(4)})';
+}
