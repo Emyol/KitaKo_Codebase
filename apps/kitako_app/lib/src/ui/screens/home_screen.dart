@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'alpha_test_screen.dart';
+import 'people_screen.dart';
 import '../theme/theme_notifier.dart';
 import '../../services/image_search_service.dart';
 import '../../models/search_models.dart';
@@ -105,6 +106,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openPeople() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) =>
+            PeopleScreen(searchService: widget.searchService),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -113,6 +123,16 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Search'),
         actions: [
+          // People / Face Recognition button
+          if (widget.searchService.isFaceSearchAvailable)
+            IconButton(
+              icon: const Icon(
+                Icons.people_outline,
+                size: 28,
+              ),
+              tooltip: 'People',
+              onPressed: _openPeople,
+            ),
           // Alpha Testing button
           IconButton(
             icon: Icon(

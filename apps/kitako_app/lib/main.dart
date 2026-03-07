@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'src/ui/screens/startup_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/services/image_search_service.dart';
+import 'src/services/face_service.dart';
 import 'src/services/model_download_service.dart';
 import 'src/ui/widgets/model_download_gate.dart';
 
@@ -33,15 +34,26 @@ class KitaKoApp extends StatefulWidget {
 
 class _KitaKoAppState extends State<KitaKoApp> {
   final ThemeNotifier _themeNotifier = ThemeNotifier();
-  final ImageSearchService _searchService = ImageSearchService();
+
+  /// Face service — optional, gracefully disabled if models not present.
+  final FaceService _faceService = FaceService();
+
+  /// Main search service — with optional face integration injected.
+  late final ImageSearchService _searchService;
 
   @override
   void initState() {
     super.initState();
+    _searchService = ImageSearchService(faceService: _faceService);
     _initializeService();
   }
 
   Future<void> _initializeService() async {
+    // Try to auto-initialize face recognition (non-blocking).
+    // If models aren't present, _faceService.isAvailable will be false
+    // and all face features silently disable.
+    await _faceService.tryAutoInitialize();
+
     await _searchService.initialize();
   }
 

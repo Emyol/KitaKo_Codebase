@@ -511,7 +511,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                     ? 'TRUE APPROXIMATE SEARCH'
                     : 'EFFECTIVELY BRUTE FORCE',
                 style: TextStyle(
-                  fontSize: 10,
+                fontSize: 10,
                   fontWeight: FontWeight.bold,
                   color: isApproximate ? Colors.green : Colors.orange,
                 ),

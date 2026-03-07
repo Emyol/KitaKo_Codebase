@@ -60,6 +60,11 @@ tools/xenova_models/
 
 # Test images
 assets/test_images/
+apps/kitako_app/assets/taglish_test_images*/
+
+# Face recognition models (download via tools/python/download_face_models.py)
+assets/face_models/*.onnx
+assets/face_models/*.zip
 
 # Jupyter checkpoints
 .ipynb_checkpoints/

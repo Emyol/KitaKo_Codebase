@@ -1,15 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:photo_manager/photo_manager.dart';
 import '../models/search_models.dart';
 
 /// Service for loading and managing device images
 ///
-/// This service handles:
-/// - Loading images from device storage using photo_manager
-/// - Caching image metadata and thumbnails
-/// - Managing image permissions
+/// TEST MODE: Loads images exclusively from /data/local/tmp/test_images/
+/// instead of scanning the device gallery via photo_manager.
+///
+/// Push test images via ADB:
+///   adb push <local_folder>/. /data/local/tmp/test_images/
 ///
 /// Example usage:
 /// ```dart
@@ -21,14 +22,17 @@ class ImageLoaderService {
   /// Cache of loaded images
   final List<ImageItem> _imageCache = [];
 
-  /// Cache of AssetEntity objects for quick access
-  final Map<String, AssetEntity> _assetCache = {};
+  /// Cache of File objects keyed by image ID (filename)
+  final Map<String, File> _fileCache = {};
+
+  /// Cache of loaded bytes for thumbnails/full images
+  final Map<String, Uint8List> _bytesCache = {};
 
   /// Whether the service has been initialized
   bool _isInitialized = false;
 
-  /// Whether we have permission to access photos
-  bool _hasPermission = false;
+  /// Test images directory (world-readable, no permissions needed)
+  static const String _testImagesDir = '/data/local/tmp/test_images';
 
   /// Supported image file extensions
   static const List<String> _supportedExtensions = [
@@ -43,47 +47,39 @@ class ImageLoaderService {
   /// Maximum number of images to load (for performance)
   static const int _maxImages = 5000;
 
-  /// Thumbnail size for previews
-  static const int _thumbnailSize = 200;
-
   /// Initialize the image loader service
   ///
-  /// This should be called before using any other methods.
-  /// It requests storage permissions and prepares the image cache.
+  /// Verifies [_testImagesDir] exists and counts images.
   ///
   /// Returns `true` if initialization was successful
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
     try {
-      debugPrint('ImageLoaderService: Requesting permission...');
+      debugPrint('ImageLoaderService: Initializing (TEST MODE - folder scan)...');
+      debugPrint('ImageLoaderService: Test images dir: $_testImagesDir');
 
-      // Request permission to access photos
-      final permission = await PhotoManager.requestPermissionExtend();
-      _hasPermission = permission.isAuth || permission.hasAccess;
-
-      if (!_hasPermission) {
-        debugPrint('ImageLoaderService: Permission denied');
-        // Fall back to mock mode if permission denied
-        _isInitialized = true;
-        return true;
+      final dir = Directory(_testImagesDir);
+      final exists = await dir.exists();
+      debugPrint('ImageLoaderService: Directory exists: $exists');
+      if (exists) {
+        final count = await dir.list().length;
+        debugPrint('ImageLoaderService: Files in directory: $count');
       }
 
-      debugPrint('ImageLoaderService: Permission granted');
       _isInitialized = true;
       return true;
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to initialize: $e');
-      // Still mark as initialized to allow mock fallback
       _isInitialized = true;
       return true;
     }
   }
 
-  /// Load all images from device storage
+  /// Load all images from the test images folder
   ///
-  /// Returns a list of [ImageItem] objects representing images on the device.
-  /// Images are cached for subsequent calls.
+  /// Scans /sdcard/KitaKo/test_images/ for supported image files.
+  /// Returns a list of [ImageItem] objects. Cached for subsequent calls.
   ///
   /// Throws [StateError] if service is not initialized
   Future<List<ImageItem>> loadDeviceImages() async {
@@ -98,66 +94,46 @@ class ImageLoaderService {
       return List.unmodifiable(_imageCache);
     }
 
-    // If no permission, return mock data
-    if (!_hasPermission) {
-      debugPrint('ImageLoaderService: No permission, using mock data');
-      _imageCache.addAll(_generateMockImages(9));
-      return List.unmodifiable(_imageCache);
-    }
-
     try {
-      debugPrint('ImageLoaderService: Loading device images...');
+      debugPrint('ImageLoaderService: Scanning test images folder: $_testImagesDir');
 
-      // Get all image albums
-      final albums = await PhotoManager.getAssetPathList(
-        type: RequestType.image,
-        hasAll: true,
-      );
-
-      if (albums.isEmpty) {
-        debugPrint('ImageLoaderService: No albums found');
-        return [];
+      final dir = Directory(_testImagesDir);
+      if (!await dir.exists()) {
+        debugPrint('ImageLoaderService: Test images folder not found! '
+            'Push images via ADB: adb push <folder>/. $_testImagesDir/');
+        _imageCache.addAll(_generateMockImages(9));
+        return List.unmodifiable(_imageCache);
       }
 
-      // Get images from the "All" album (first one usually)
-      final allAlbum = albums.first;
-      final assetCount = await allAlbum.assetCountAsync;
-      final count = assetCount.clamp(0, _maxImages);
+      // List all files in the directory
+      final entities = await dir.list().toList();
+      int imageCount = 0;
 
-      debugPrint('ImageLoaderService: Found $assetCount images, loading $count');
+      for (final entity in entities) {
+        if (entity is File && _isSupported(entity.path)) {
+          if (imageCount >= _maxImages) break;
 
-      // Load assets
-      final assets = await allAlbum.getAssetListPaged(page: 0, size: count);
+          final filename = entity.path.split('/').last;
+          final stat = await entity.stat();
 
-      // Convert to ImageItem objects - optimized to avoid slow file operations
-      for (final asset in assets) {
-        // Use the asset's relativePath property instead of fetching the file
-        // This is much faster as it doesn't require disk I/O for each image
-        final relativePath = asset.relativePath ?? '';
-        final title = await asset.titleAsync;
-        final path = relativePath.isNotEmpty 
-            ? '$relativePath/$title' 
-            : title;
+          final imageItem = ImageItem(
+            id: filename, // Use filename as unique ID
+            path: entity.path,
+            createdAt: stat.changed,
+            modifiedAt: stat.modified,
+            sizeBytes: stat.size,
+          );
 
-        final imageItem = ImageItem(
-          id: asset.id,
-          path: path,
-          createdAt: asset.createDateTime,
-          modifiedAt: asset.modifiedDateTime,
-          sizeBytes: null, // Skip file size for performance
-          width: asset.width,
-          height: asset.height,
-        );
-
-        _imageCache.add(imageItem);
-        _assetCache[asset.id] = asset;
+          _imageCache.add(imageItem);
+          _fileCache[filename] = entity;
+          imageCount++;
+        }
       }
 
-      debugPrint('ImageLoaderService: Loaded ${_imageCache.length} images');
+      debugPrint('ImageLoaderService: Loaded ${_imageCache.length} test images from folder');
       return List.unmodifiable(_imageCache);
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to load images: $e');
-      // Fall back to mock data on error
       if (_imageCache.isEmpty) {
         _imageCache.addAll(_generateMockImages(9));
       }
@@ -165,19 +141,32 @@ class ImageLoaderService {
     }
   }
 
+  /// Check if a file path has a supported image extension
+  bool _isSupported(String path) {
+    final lower = path.toLowerCase();
+    return _supportedExtensions.any((ext) => lower.endsWith(ext));
+  }
+
   /// Load thumbnail for a specific image
   ///
-  /// Returns thumbnail data as Uint8List, or null if not available
+  /// For test mode, returns the full image bytes (the embedding
+  /// service will resize internally). Results are cached.
   Future<Uint8List?> loadThumbnail(String imageId) async {
-    final asset = _assetCache[imageId];
-    if (asset == null) return null;
+    // Return cached bytes if available
+    if (_bytesCache.containsKey(imageId)) {
+      return _bytesCache[imageId];
+    }
+
+    final file = _fileCache[imageId];
+    if (file == null) {
+      debugPrint('ImageLoaderService: File not found for $imageId');
+      return null;
+    }
 
     try {
-      final thumb = await asset.thumbnailDataWithSize(
-        const ThumbnailSize(_thumbnailSize, _thumbnailSize),
-        quality: 80,
-      );
-      return thumb;
+      final bytes = await file.readAsBytes();
+      _bytesCache[imageId] = bytes;
+      return bytes;
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to load thumbnail for $imageId: $e');
       return null;
@@ -187,21 +176,22 @@ class ImageLoaderService {
   /// Load full image bytes for a specific image
   ///
   /// Returns image file data as Uint8List, or null if not available.
-  /// This reads the actual file from disk, so use sparingly.
   Future<Uint8List?> loadImageBytes(String imageId) async {
-    final asset = _assetCache[imageId];
-    if (asset == null) {
-      debugPrint('ImageLoaderService: Asset not found for $imageId');
+    // Reuse cached bytes from thumbnail load if available
+    if (_bytesCache.containsKey(imageId)) {
+      return _bytesCache[imageId];
+    }
+
+    final file = _fileCache[imageId];
+    if (file == null) {
+      debugPrint('ImageLoaderService: File not found for $imageId');
       return null;
     }
 
     try {
-      final file = await asset.file;
-      if (file == null) {
-        debugPrint('ImageLoaderService: File not available for $imageId');
-        return null;
-      }
-      return await file.readAsBytes();
+      final bytes = await file.readAsBytes();
+      _bytesCache[imageId] = bytes;
+      return bytes;
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to load image bytes for $imageId: $e');
       return null;
@@ -235,11 +225,11 @@ class ImageLoaderService {
 
   /// Refresh the image cache
   ///
-  /// Forces a reload of all images from device storage.
-  /// Useful when new images have been added or removed.
+  /// Forces a reload of all images from the test folder.
   Future<List<ImageItem>> refreshImages() async {
     _imageCache.clear();
-    _assetCache.clear();
+    _fileCache.clear();
+    _bytesCache.clear();
     return loadDeviceImages();
   }
 
@@ -275,7 +265,8 @@ class ImageLoaderService {
   /// Use this to free up memory when images are no longer needed
   void clearCache() {
     _imageCache.clear();
-    _assetCache.clear();
+    _fileCache.clear();
+    _bytesCache.clear();
   }
 
   /// Dispose of resources
@@ -286,16 +277,16 @@ class ImageLoaderService {
     _isInitialized = false;
   }
 
-  /// Check if we have permission to access photos
-  bool get hasPermission => _hasPermission;
+  /// In test mode, permission is always granted (file system access)
+  bool get hasPermission => true;
 
-  /// Open app settings for permission management
+  /// Open app settings (no-op in test mode)
   Future<void> openSettings() async {
-    await PhotoManager.openSetting();
+    debugPrint('ImageLoaderService: openSettings not needed in test mode');
   }
 
   // ========== Mock Implementation ==========
-  // Used as fallback when permission is denied or for testing
+  // Used as fallback when test folder is missing
 
   /// Generate mock images for testing
   List<ImageItem> _generateMockImages(int count) {

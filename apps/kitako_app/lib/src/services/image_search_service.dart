@@ -6,6 +6,7 @@ import '../models/search_models.dart';
 import 'image_loader_service.dart';
 import 'embedding_service.dart';
 import 'ann_search_service.dart';
+import 'face_service.dart';
 
 /// Main orchestrator service for image search functionality
 ///
@@ -38,16 +39,23 @@ class ImageSearchService {
   final ANNSearchService _annSearch;
   final TaglishNormalizer _normalizer = const TaglishNormalizer();
 
+  /// Optional face recognition service.
+  /// When null or unavailable, face features are silently disabled.
+  final FaceService? _faceService;
+
   /// Create a new ImageSearchService with optional custom services
   ///
   /// If services are not provided, default instances will be created.
+  /// [faceService] is fully optional — pass null to disable face features.
   ImageSearchService({
     ImageLoaderService? imageLoader,
     EmbeddingService? embeddingService,
     ANNSearchService? annSearchService,
+    FaceService? faceService,
   }) : _imageLoader = imageLoader ?? ImageLoaderService(),
        _embeddingService = embeddingService ?? EmbeddingService(),
-       _annSearch = annSearchService ?? ANNSearchService();
+       _annSearch = annSearchService ?? ANNSearchService(),
+       _faceService = faceService;
 
   // ========== State Management ==========
 
@@ -82,6 +90,12 @@ class ImageSearchService {
 
   /// Access to embedding service (for model switching)
   EmbeddingService get embeddingService => _embeddingService;
+
+  /// Access to face service (may be null if face recognition is disabled)
+  FaceService? get faceService => _faceService;
+
+  /// Whether face recognition features are available
+  bool get isFaceSearchAvailable => _faceService?.isAvailable ?? false;
 
   /// Whether the service has been initialized
   bool _isInitialized = false;
@@ -347,6 +361,150 @@ class ImageSearchService {
     }
   }
 
+  // ========== Face-Based Search ==========
+
+  /// Search for images containing a named person.
+  ///
+  /// Uses the face recognition system to find images containing a
+  /// person whose label matches [personLabel]. Falls back gracefully
+  /// to empty results if face service is unavailable.
+  ///
+  /// Parameters:
+  /// - [personLabel]: The name/label to search for
+  Future<void> searchByPerson(String personLabel) async {
+    if (!_isInitialized) {
+      throw StateError('ImageSearchService not initialized');
+    }
+
+    if (_faceService == null || !_faceService!.isAvailable) {
+      debugPrint('ImageSearchService: Face search unavailable, returning empty');
+      _updateState(SearchState(
+        status: SearchStatus.noResults,
+        query: '[Person: $personLabel]',
+        result: SearchResult(images: [], query: '[Person: $personLabel]'),
+      ));
+      return;
+    }
+
+    try {
+      _updateState(SearchState(
+        status: SearchStatus.searching,
+        query: '[Person: $personLabel]',
+      ));
+
+      final stopwatch = Stopwatch()..start();
+      final imageIds = _faceService!.searchByPersonLabel(personLabel);
+
+      // Resolve image IDs to ImageItems with thumbnails
+      final results = <ImageItem>[];
+      for (final id in imageIds) {
+        try {
+          final imageWithThumb = await _imageLoader.getImageWithThumbnail(id);
+          results.add(imageWithThumb);
+        } catch (e) {
+          debugPrint('ImageSearchService: Failed to load image $id: $e');
+        }
+      }
+
+      stopwatch.stop();
+      debugPrint('ImageSearchService: Person search for "$personLabel" '
+          'found ${results.length} images in ${stopwatch.elapsedMilliseconds}ms');
+
+      if (results.isEmpty) {
+        _updateState(SearchState(
+          status: SearchStatus.noResults,
+          query: '[Person: $personLabel]',
+          result: SearchResult(images: [], query: '[Person: $personLabel]'),
+        ));
+      } else {
+        _updateState(SearchState(
+          status: SearchStatus.success,
+          query: '[Person: $personLabel]',
+          result: SearchResult(
+            images: results,
+            query: '[Person: $personLabel]',
+            searchTimeMs: stopwatch.elapsedMilliseconds,
+          ),
+        ));
+      }
+    } catch (e) {
+      debugPrint('ImageSearchService: Person search failed: $e');
+      _updateState(SearchState(
+        status: SearchStatus.error,
+        query: '[Person: $personLabel]',
+        error: e.toString(),
+      ));
+    }
+  }
+
+  /// Combined search: text query + optional face matching.
+  ///
+  /// 1. Performs standard SigLIP text search
+  /// 2. If query looks like a person name and face service is available,
+  ///    also searches by face label
+  /// 3. Merges results (union), keeping text results ranked first
+  Future<void> searchCombined(
+    String query, {
+    int? topK,
+    double? threshold,
+  }) async {
+    if (!_isInitialized) {
+      throw StateError('ImageSearchService not initialized');
+    }
+
+    if (query.trim().isEmpty) {
+      _updateState(const SearchState());
+      return;
+    }
+
+    // Always do the standard text search
+    await searchImages(query, topK: topK, threshold: threshold);
+
+    // If face service is available, also check for person matches
+    if (_faceService != null && _faceService!.isAvailable) {
+      try {
+        final faceImageIds = _faceService!.searchByPersonLabel(query);
+
+        if (faceImageIds.isNotEmpty) {
+          // Merge face results into existing text results
+          final existingIds = _currentState.result?.images
+              .map((img) => img.id)
+              .toSet() ?? <String>{};
+
+          final additionalImages = <ImageItem>[];
+          for (final id in faceImageIds) {
+            if (!existingIds.contains(id)) {
+              try {
+                final img = await _imageLoader.getImageWithThumbnail(id);
+                additionalImages.add(img);
+              } catch (_) {}
+            }
+          }
+
+          if (additionalImages.isNotEmpty) {
+            final mergedImages = <ImageItem>[
+              ...(_currentState.result?.images ?? <ImageItem>[]),
+              ...additionalImages,
+            ];
+
+            _updateState(SearchState(
+              status: SearchStatus.success,
+              query: query,
+              normalizedQuery: _currentState.normalizedQuery,
+              result: SearchResult(images: mergedImages, query: query),
+            ));
+
+            debugPrint('ImageSearchService: Combined search added '
+                '${additionalImages.length} face matches');
+          }
+        }
+      } catch (e) {
+        // Face search failure is non-fatal
+        debugPrint('ImageSearchService: Face augmentation failed: $e');
+      }
+    }
+  }
+
   // ========== Image Management ==========
 
   /// Refresh device images and re-index
@@ -401,6 +559,7 @@ class ImageSearchService {
       'embeddingCache': _embeddingService.getCacheStats(),
       'annIndex': _annSearch.getIndexStats(),
       'currentState': _currentState.status.toString(),
+      'faceRecognition': _faceService?.getStats() ?? {'status': 'disabled'},
     };
   }
 
@@ -413,6 +572,7 @@ class ImageSearchService {
     _imageLoader.dispose();
     _embeddingService.dispose();
     _annSearch.dispose();
+    _faceService?.dispose();
     _isInitialized = false;
     debugPrint('ImageSearchService: Disposed');
   }
@@ -547,9 +707,72 @@ class ImageSearchService {
         }
       }
       debugPrint('======================');
+
+      // Face indexing (optional, non-blocking to main flow)
+      await _indexFacesIfAvailable(imagesToIndex);
     } catch (e) {
       debugPrint('ImageSearchService: Failed to index images: $e');
       rethrow;
+    }
+  }
+
+  /// Index faces in gallery images (optional, non-blocking).
+  ///
+  /// If the face service is not available, this is a no-op.
+  /// Failures in face indexing do NOT affect the main search pipeline.
+  Future<void> _indexFacesIfAvailable(List<ImageItem> images) async {
+    if (_faceService == null || !_faceService!.isAvailable) return;
+
+    try {
+      debugPrint('ImageSearchService: Starting face indexing for ${images.length} images...');
+      final stopwatch = Stopwatch()..start();
+
+      // Process in small batches to avoid OOM and ANR.
+      // Use full-resolution images (not tiny 200px thumbnails) because
+      // SCRFD needs reasonable resolution to detect faces accurately.
+      const batchSize = 10; // smaller batches since full images are larger
+      int totalProcessed = 0;
+
+      for (int start = 0; start < images.length; start += batchSize) {
+        final end = (start + batchSize).clamp(0, images.length);
+        final batch = images.sublist(start, end);
+
+        final entries = <MapEntry<String, Uint8List>>[];
+        for (final image in batch) {
+          try {
+            final bytes = await _imageLoader.loadImageBytes(image.id);
+            if (bytes != null && bytes.isNotEmpty) {
+              entries.add(MapEntry(image.id, bytes));
+            }
+          } catch (e) {
+            // Skip images that can't be loaded
+          }
+        }
+
+        if (entries.isNotEmpty) {
+          await _faceService!.indexImageBatch(entries);
+        }
+
+        totalProcessed += batch.length;
+        if (totalProcessed % 100 == 0 || totalProcessed == images.length) {
+          debugPrint('ImageSearchService: Face scan progress $totalProcessed/${images.length}');
+        }
+
+        // Yield to event loop to prevent ANR
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+
+      // Run clustering after all batches processed
+      _faceService!.finalizeClustering();
+
+      stopwatch.stop();
+      debugPrint('ImageSearchService: Face indexing complete in '
+          '${stopwatch.elapsedMilliseconds}ms — '
+          '${_faceService!.faceCount} faces, '
+          '${_faceService!.personCount} persons');
+    } catch (e) {
+      // Face indexing failure is non-fatal
+      debugPrint('ImageSearchService: Face indexing failed (non-fatal): $e');
     }
   }
 
