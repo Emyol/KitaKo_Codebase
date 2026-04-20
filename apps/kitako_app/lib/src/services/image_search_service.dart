@@ -208,19 +208,7 @@ class ImageSearchService {
         threshold: thresh,
       );
 
-      // Step 2.5: Load thumbnails for search results
-      debugPrint('ImageSearchService: Loading thumbnails for ${matchingImages.length} results...');
-      final imagesWithThumbnails = <ImageItem>[];
-      for (final image in matchingImages) {
-        try {
-          final imageWithThumb = await _imageLoader.getImageWithThumbnail(image.id);
-          imagesWithThumbnails.add(imageWithThumb);
-        } catch (e) {
-          debugPrint('ImageSearchService: Failed to load thumbnail for ${image.id}: $e');
-          // Keep original image without thumbnail
-          imagesWithThumbnails.add(image);
-        }
-      }
+      final imagesWithThumbnails = await _withThumbnails(matchingImages);
 
       stopwatch.stop();
       debugPrint(
@@ -312,19 +300,7 @@ class ImageSearchService {
         threshold: thresh,
       );
 
-      // Step 2.5: Load thumbnails for search results
-      debugPrint('ImageSearchService: Loading thumbnails for ${matchingImages.length} results...');
-      final imagesWithThumbnails = <ImageItem>[];
-      for (final image in matchingImages) {
-        try {
-          final imageWithThumb = await _imageLoader.getImageWithThumbnail(image.id);
-          imagesWithThumbnails.add(imageWithThumb);
-        } catch (e) {
-          debugPrint('ImageSearchService: Failed to load thumbnail for ${image.id}: $e');
-          // Keep original image without thumbnail
-          imagesWithThumbnails.add(image);
-        }
-      }
+      final imagesWithThumbnails = await _withThumbnails(matchingImages);
 
       stopwatch.stop();
       debugPrint(
@@ -376,7 +352,8 @@ class ImageSearchService {
       throw StateError('ImageSearchService not initialized');
     }
 
-    if (_faceService == null || !_faceService!.isAvailable) {
+    final face = _faceService;
+    if (face == null || !face.isAvailable) {
       debugPrint('ImageSearchService: Face search unavailable, returning empty');
       _updateState(SearchState(
         status: SearchStatus.noResults,
@@ -393,7 +370,7 @@ class ImageSearchService {
       ));
 
       final stopwatch = Stopwatch()..start();
-      final imageIds = _faceService!.searchByPersonLabel(personLabel);
+      final imageIds = face.searchByPersonLabel(personLabel);
 
       // Resolve image IDs to ImageItems with thumbnails
       final results = <ImageItem>[];
@@ -460,42 +437,42 @@ class ImageSearchService {
     // Always do the standard text search
     await searchImages(query, topK: topK, threshold: threshold);
 
-    // If face service is available, also check for person matches
-    if (_faceService != null && _faceService!.isAvailable) {
+    final face = _faceService;
+    if (face != null && face.isAvailable) {
       try {
-        final faceImageIds = _faceService!.searchByPersonLabel(query);
+        final faceImageIds = face.searchByPersonLabel(query);
 
         if (faceImageIds.isNotEmpty) {
-          // Merge face results into existing text results
-          final existingIds = _currentState.result?.images
-              .map((img) => img.id)
-              .toSet() ?? <String>{};
-
-          final additionalImages = <ImageItem>[];
+          // Load face-matched images
+          final faceImages = <ImageItem>[];
           for (final id in faceImageIds) {
-            if (!existingIds.contains(id)) {
-              try {
-                final img = await _imageLoader.getImageWithThumbnail(id);
-                additionalImages.add(img);
-              } catch (_) {}
-            }
+            try {
+              final img = await _imageLoader.getImageWithThumbnail(id);
+              faceImages.add(img);
+            } catch (_) {}
           }
 
-          if (additionalImages.isNotEmpty) {
-            final mergedImages = <ImageItem>[
-              ...(_currentState.result?.images ?? <ImageItem>[]),
-              ...additionalImages,
-            ];
+          if (faceImages.isNotEmpty) {
+            // Face results go FIRST — then append any SigLIP results that
+            // aren't already covered by the face match.
+            final faceIds = faceImages.map((img) => img.id).toSet();
+            final sigLipOnly = (_currentState.result?.images ?? <ImageItem>[])
+                .where((img) => !faceIds.contains(img.id))
+                .toList();
 
             _updateState(SearchState(
               status: SearchStatus.success,
               query: query,
               normalizedQuery: _currentState.normalizedQuery,
-              result: SearchResult(images: mergedImages, query: query),
+              result: SearchResult(
+                images: [...faceImages, ...sigLipOnly],
+                query: query,
+              ),
             ));
 
-            debugPrint('ImageSearchService: Combined search added '
-                '${additionalImages.length} face matches');
+            debugPrint('ImageSearchService: Combined search — '
+                '${faceImages.length} face matches, '
+                '${sigLipOnly.length} SigLIP-only results');
           }
         }
       } catch (e) {
@@ -578,6 +555,21 @@ class ImageSearchService {
   }
 
   // ========== Private Methods ==========
+
+  /// Resolves a list of images to versions with loaded thumbnails.
+  /// Images that fail to load a thumbnail are kept as-is.
+  Future<List<ImageItem>> _withThumbnails(List<ImageItem> images) async {
+    final result = <ImageItem>[];
+    for (final image in images) {
+      try {
+        result.add(await _imageLoader.getImageWithThumbnail(image.id));
+      } catch (e) {
+        debugPrint('ImageSearchService: Failed to load thumbnail for ${image.id}: $e');
+        result.add(image);
+      }
+    }
+    return result;
+  }
 
   /// Update search state and notify listeners
   void _updateState(SearchState newState) {
@@ -672,19 +664,7 @@ class ImageSearchService {
         'ImageSearchService: Successfully embedded: $successCount, Failed/Skipped: $failedCount',
       );
 
-      // Load thumbnails for indexed images
-      debugPrint('ImageSearchService: Loading thumbnails for ${imagesToIndex.length} indexed images...');
-      final imagesWithThumbnails = <ImageItem>[];
-      for (final image in imagesToIndex) {
-        try {
-          final imageWithThumb = await _imageLoader.getImageWithThumbnail(image.id);
-          imagesWithThumbnails.add(imageWithThumb);
-        } catch (e) {
-          debugPrint('ImageSearchService: Failed to load thumbnail for ${image.id}: $e');
-          // Keep original image without thumbnail
-          imagesWithThumbnails.add(image);
-        }
-      }
+      final imagesWithThumbnails = await _withThumbnails(imagesToIndex);
 
       // Store indexed images and notify listeners
       _indexedImages = imagesWithThumbnails;
@@ -721,16 +701,14 @@ class ImageSearchService {
   /// If the face service is not available, this is a no-op.
   /// Failures in face indexing do NOT affect the main search pipeline.
   Future<void> _indexFacesIfAvailable(List<ImageItem> images) async {
-    if (_faceService == null || !_faceService!.isAvailable) return;
+    final face = _faceService;
+    if (face == null || !face.isAvailable) return;
 
     try {
       debugPrint('ImageSearchService: Starting face indexing for ${images.length} images...');
       final stopwatch = Stopwatch()..start();
 
-      // Process in small batches to avoid OOM and ANR.
-      // Use full-resolution images (not tiny 200px thumbnails) because
-      // SCRFD needs reasonable resolution to detect faces accurately.
-      const batchSize = 10; // smaller batches since full images are larger
+      const batchSize = 10;
       int totalProcessed = 0;
 
       for (int start = 0; start < images.length; start += batchSize) {
@@ -744,13 +722,11 @@ class ImageSearchService {
             if (bytes != null && bytes.isNotEmpty) {
               entries.add(MapEntry(image.id, bytes));
             }
-          } catch (e) {
-            // Skip images that can't be loaded
-          }
+          } catch (_) {}
         }
 
         if (entries.isNotEmpty) {
-          await _faceService!.indexImageBatch(entries);
+          await face.indexImageBatch(entries);
         }
 
         totalProcessed += batch.length;
@@ -758,18 +734,16 @@ class ImageSearchService {
           debugPrint('ImageSearchService: Face scan progress $totalProcessed/${images.length}');
         }
 
-        // Yield to event loop to prevent ANR
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
 
-      // Run clustering after all batches processed
-      _faceService!.finalizeClustering();
+      face.finalizeClustering();
 
       stopwatch.stop();
       debugPrint('ImageSearchService: Face indexing complete in '
           '${stopwatch.elapsedMilliseconds}ms — '
-          '${_faceService!.faceCount} faces, '
-          '${_faceService!.personCount} persons');
+          '${face.faceCount} faces, '
+          '${face.personCount} persons');
     } catch (e) {
       // Face indexing failure is non-fatal
       debugPrint('ImageSearchService: Face indexing failed (non-fatal): $e');

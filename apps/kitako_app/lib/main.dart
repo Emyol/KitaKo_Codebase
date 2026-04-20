@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'src/ui/screens/startup_screen.dart';
+import 'src/ui/theme/app_theme.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/services/image_search_service.dart';
 import 'src/services/face_service.dart';
@@ -34,11 +35,7 @@ class KitaKoApp extends StatefulWidget {
 
 class _KitaKoAppState extends State<KitaKoApp> {
   final ThemeNotifier _themeNotifier = ThemeNotifier();
-
-  /// Face service — optional, gracefully disabled if models not present.
   final FaceService _faceService = FaceService();
-
-  /// Main search service — with optional face integration injected.
   late final ImageSearchService _searchService;
 
   @override
@@ -73,58 +70,56 @@ class _KitaKoAppState extends State<KitaKoApp> {
           title: 'KitaKo',
           debugShowCheckedModeBanner: false,
           themeMode: _themeNotifier.themeMode,
-          // Dark Theme
           darkTheme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: const Color(0xFF1A1A1A),
+            scaffoldBackgroundColor: AppColors.background,
             colorScheme: const ColorScheme.dark(
-              primary: Color(0xFF4A90E2),
-              secondary: Color(0xFF5BA3F5),
-              surface: Color(0xFF2A2A2A),
-              background: Color(0xFF1A1A1A),
+              primary: AppColors.primary,
+              secondary: AppColors.primaryLight,
+              surface: AppColors.surface,
             ),
             appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFF1A1A1A),
+              backgroundColor: AppColors.background,
               elevation: 0,
               centerTitle: false,
+              foregroundColor: Colors.white,
+              iconTheme: IconThemeData(color: Colors.white),
               titleTextStyle: TextStyle(
-                color: Color(0xFF1E3A5F),
+                color: AppColors.primary,
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
             ),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
-              fillColor: const Color(0xFF2A2A2A),
+              fillColor: AppColors.surface,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
               ),
               hintStyle: const TextStyle(
-                color: Color(0xFF666666),
+                color: AppColors.textSecondary,
                 fontSize: 16,
               ),
             ),
           ),
-          // Light Theme
           theme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.light,
             scaffoldBackgroundColor: const Color(0xFFF5F5F5),
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF4A90E2),
-              secondary: Color(0xFF5BA3F5),
+              primary: AppColors.primary,
+              secondary: AppColors.primaryLight,
               surface: Colors.white,
-              background: Color(0xFFF5F5F5),
             ),
             appBarTheme: const AppBarTheme(
               backgroundColor: Color(0xFFF5F5F5),
               elevation: 0,
               centerTitle: false,
-              iconTheme: IconThemeData(color: Color(0xFF1E3A5F)),
+              iconTheme: IconThemeData(color: AppColors.primaryDark),
               titleTextStyle: TextStyle(
-                color: Color(0xFF1E3A5F),
+                color: AppColors.primaryDark,
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
@@ -143,7 +138,7 @@ class _KitaKoAppState extends State<KitaKoApp> {
             ),
           ),
           home: ModelDownloadGate(
-            autoDownload: true, // Auto-download on first launch
+            autoDownload: true,
             child: StartupScreen(
               themeNotifier: _themeNotifier,
               searchService: _searchService,

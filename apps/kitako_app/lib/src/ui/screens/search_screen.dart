@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 import '../../services/image_search_service.dart';
 import '../../models/search_models.dart';
@@ -24,7 +23,6 @@ class _SearchScreenState extends State<SearchScreen> {
   StreamSubscription<List<ImageItem>>? _imagesLoadedSubscription;
   late SearchState _currentSearchState;
   List<ImageItem> _indexedImages = [];
-  bool _isLoadingGallery = false;
 
   @override
   void initState() {
@@ -76,7 +74,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _performSearch() {
     if (_searchController.text.trim().isEmpty) return;
-    widget.searchService.searchImages(_searchController.text.trim());
+    widget.searchService.searchCombined(_searchController.text.trim());
   }
 
   @override
@@ -93,19 +91,6 @@ class _SearchScreenState extends State<SearchScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: const Text('Search'),
-        actions: [
-          IconButton(
-            icon: Icon(
-              Icons.settings_outlined,
-              color: Theme.of(context).appBarTheme.titleTextStyle?.color,
-              size: 28,
-            ),
-            onPressed: () {
-              // Settings action
-            },
-          ),
-          const SizedBox(width: 8),
-        ],
       ),
       body: Column(
         children: [
@@ -118,7 +103,7 @@ class _SearchScreenState extends State<SearchScreen> {
               color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFF5F5F5),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(isDark ? 0.3 : 0.1),
+                  color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.1),
                   blurRadius: 10,
                   offset: const Offset(0, -2),
                 ),
@@ -194,7 +179,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: const Color(0xFF4A90E2).withOpacity(0.5),
+                        color: const Color(0xFF4A90E2).withValues(alpha: 0.5),
                         width: 1,
                       ),
                     ),
@@ -257,7 +242,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: Text(
                   'Normalized: "${_currentSearchState.normalizedQuery}"',
                   style: TextStyle(
-                    color: const Color(0xFF4A90E2).withOpacity(0.8),
+                    color: const Color(0xFF4A90E2).withValues(alpha: 0.8),
                     fontSize: 12,
                     fontStyle: FontStyle.italic,
                   ),
@@ -319,7 +304,7 @@ class _SearchScreenState extends State<SearchScreen> {
             const SizedBox(height: 8),
             Text(
               'Try searching for something else',
-              style: TextStyle(color: textColor.withOpacity(0.6), fontSize: 14),
+              style: TextStyle(color: textColor.withValues(alpha: 0.6), fontSize: 14),
             ),
           ],
         ),
@@ -369,10 +354,10 @@ class _SearchScreenState extends State<SearchScreen> {
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF4A90E2).withOpacity(0.15),
+                        color: const Color(0xFF4A90E2).withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: const Color(0xFF4A90E2).withOpacity(0.3),
+                          color: const Color(0xFF4A90E2).withValues(alpha: 0.3),
                         ),
                       ),
                       child: Row(
@@ -408,7 +393,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 Text(
                   '${results.length} result${results.length == 1 ? '' : 's'}',
                   style: TextStyle(
-                    color: textColor.withOpacity(0.6),
+                    color: textColor.withValues(alpha: 0.6),
                     fontSize: 13,
                   ),
                 ),
@@ -540,22 +525,6 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            if (_isLoadingGallery)
-              Column(
-                children: [
-                  const CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A90E2)),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Loading gallery...',
-                    style: TextStyle(
-                      color: textColor.withOpacity(0.6),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
           ],
         ),
       );
@@ -580,7 +549,7 @@ class _SearchScreenState extends State<SearchScreen> {
               Text(
                 '${_indexedImages.length} images',
                 style: TextStyle(
-                  color: textColor.withOpacity(0.6),
+                  color: textColor.withValues(alpha: 0.6),
                   fontSize: 13,
                 ),
               ),
@@ -669,8 +638,8 @@ class _SearchScreenState extends State<SearchScreen> {
             Icon(
               Icons.image_outlined,
               color: isDark
-                  ? Colors.white.withOpacity(0.3)
-                  : Colors.black.withOpacity(0.3),
+                  ? Colors.white.withValues(alpha: 0.3)
+                  : Colors.black.withValues(alpha: 0.3),
               size: 32,
             ),
             const SizedBox(height: 4),
@@ -680,8 +649,8 @@ class _SearchScreenState extends State<SearchScreen> {
                 image.name,
                 style: TextStyle(
                   color: isDark
-                      ? Colors.white.withOpacity(0.5)
-                      : Colors.black.withOpacity(0.5),
+                      ? Colors.white.withValues(alpha: 0.5)
+                      : Colors.black.withValues(alpha: 0.5),
                   fontSize: 9,
                 ),
                 maxLines: 1,

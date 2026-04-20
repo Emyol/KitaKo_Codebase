@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
@@ -115,6 +115,61 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildThumbnail(ImageItem image, bool isDark) {
+    if (image.thumbnail != null) {
+      return Image.memory(
+        image.thumbnail!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, _) => _buildPlaceholder(image, isDark),
+      );
+    }
+    final file = File(image.path);
+    if (file.existsSync()) {
+      return Image.file(
+        file,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, _) => _buildPlaceholder(image, isDark),
+      );
+    }
+    return _buildPlaceholder(image, isDark);
+  }
+
+  Widget _buildPlaceholder(ImageItem image, bool isDark) {
+    return Container(
+      color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.image_outlined,
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.3)
+                  : Colors.black.withValues(alpha: 0.3),
+              size: 40,
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                image.name,
+                style: TextStyle(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.5)
+                      : Colors.black.withValues(alpha: 0.5),
+                  fontSize: 10,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -144,9 +199,8 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: _openAlphaTest,
           ),
           IconButton(
-            icon: Icon(
+            icon: const Icon(
               Icons.settings_outlined,
-              color: Theme.of(context).appBarTheme.titleTextStyle?.color,
               size: 28,
             ),
             onPressed: _openSettings,
@@ -196,45 +250,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       itemCount: _images.length,
                       itemBuilder: (context, index) {
                         final image = _images[index];
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? const Color(0xFF2A2A2A)
-                                : const Color(0xFFE0E0E0),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.image_outlined,
-                                  color: isDark
-                                      ? Colors.white.withOpacity(0.3)
-                                      : Colors.black.withOpacity(0.3),
-                                  size: 40,
-                                ),
-                                const SizedBox(height: 4),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                  ),
-                                  child: Text(
-                                    image.name,
-                                    style: TextStyle(
-                                      color: isDark
-                                          ? Colors.white.withOpacity(0.5)
-                                          : Colors.black.withOpacity(0.5),
-                                      fontSize: 10,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: _buildThumbnail(image, isDark),
                         );
                       },
                     ),
