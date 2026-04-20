@@ -44,8 +44,7 @@ class ImageLoaderService {
     '.webp',
   ];
 
-  /// Maximum number of images to load (for performance)
-  static const int _maxImages = 5000;
+  static const int _maxImages = 15000;
 
   /// Initialize the image loader service
   ///

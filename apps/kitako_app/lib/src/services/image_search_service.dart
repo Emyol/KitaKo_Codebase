@@ -607,10 +607,7 @@ class ImageSearchService {
       int successCount = 0;
       int failedCount = 0;
 
-      // Limit to first 1000 images for IVF-PQ testing
-      const maxImagesToIndex = 1000;
-      final imagesToProcess = allImages.take(maxImagesToIndex).toList();
-      debugPrint('ImageSearchService: Limiting to first $maxImagesToIndex images for IVF-PQ testing');
+      final imagesToProcess = allImages;
 
       // Process images in parallel batches for speed
       // Using thumbnails (200x200) instead of full images for faster loading
@@ -755,7 +752,7 @@ class ImageSearchService {
   /// Re-index all images with the current model
   ///
   /// Use this after switching models to regenerate all embeddings.
-  /// This will take 2-3 minutes for 1000 images.
+  /// This will take several minutes depending on dataset size.
   Future<void> reindexAllImages() async {
     if (!_isInitialized) {
       throw StateError('ImageSearchService not initialized');
