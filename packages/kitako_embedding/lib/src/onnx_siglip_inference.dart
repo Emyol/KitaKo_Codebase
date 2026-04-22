@@ -56,31 +56,18 @@ class OnnxSiglipInference {
     debugPrint('OnnxSiglipInference: Config: $_config');
 
     OrtEnv.instance.init();
+
+    // Use all performance cores (4 threads covers most mobile SoCs).
+    // NNAPI is intentionally excluded: it silently downcasts FP32 ops to FP16
+    // on the GPU/DSP, producing results that diverge from the PyTorch baseline.
+    // XNNPACK runs strict FP32 via ARM NEON SIMD and matches PyTorch closely.
     _sessionOptions = OrtSessionOptions()..setIntraOpNumThreads(4);
 
-    if (Platform.isAndroid) {
-      // NNAPI dispatches supported ops to GPU/DSP/NPU; CPU handles the rest.
-      try {
-        _sessionOptions!.appendNnapiProvider(NnapiFlags.useNone);
-        debugPrint('OnnxSiglipInference: NNAPI execution provider enabled');
-      } catch (e) {
-        debugPrint('OnnxSiglipInference: NNAPI unavailable: $e');
-      }
-
-      // XNNPACK accelerates ARM SIMD ops — coexists safely with NNAPI.
-      try {
-        _sessionOptions!.appendXnnpackProvider();
-        debugPrint('OnnxSiglipInference: XNNPACK execution provider enabled');
-      } catch (e) {
-        debugPrint('OnnxSiglipInference: XNNPACK unavailable: $e');
-      }
-    } else if (Platform.isIOS || Platform.isMacOS) {
-      try {
-        _sessionOptions!.appendCoreMLProvider(CoreMLFlags.useNone);
-        debugPrint('OnnxSiglipInference: CoreML execution provider enabled');
-      } catch (e) {
-        debugPrint('OnnxSiglipInference: CoreML unavailable: $e');
-      }
+    try {
+      _sessionOptions!.appendXnnpackProvider();
+      debugPrint('OnnxSiglipInference: XNNPACK (FP32 SIMD) enabled');
+    } catch (e) {
+      debugPrint('OnnxSiglipInference: XNNPACK unavailable, using default CPU: $e');
     }
   }
 
