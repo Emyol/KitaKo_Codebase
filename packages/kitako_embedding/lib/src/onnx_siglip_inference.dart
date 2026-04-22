@@ -54,9 +54,34 @@ class OnnxSiglipInference {
     _config = SiglipModelConfig.forVersion(modelVersion);
     debugPrint('OnnxSiglipInference: Configured for ${_config.version.name}');
     debugPrint('OnnxSiglipInference: Config: $_config');
-    
+
     OrtEnv.instance.init();
-    _sessionOptions = OrtSessionOptions();
+    _sessionOptions = OrtSessionOptions()..setIntraOpNumThreads(4);
+
+    if (Platform.isAndroid) {
+      // NNAPI dispatches supported ops to GPU/DSP/NPU; CPU handles the rest.
+      try {
+        _sessionOptions!.appendNnapiProvider(NnapiFlags.useNone);
+        debugPrint('OnnxSiglipInference: NNAPI execution provider enabled');
+      } catch (e) {
+        debugPrint('OnnxSiglipInference: NNAPI unavailable: $e');
+      }
+
+      // XNNPACK accelerates ARM SIMD ops — coexists safely with NNAPI.
+      try {
+        _sessionOptions!.appendXnnpackProvider();
+        debugPrint('OnnxSiglipInference: XNNPACK execution provider enabled');
+      } catch (e) {
+        debugPrint('OnnxSiglipInference: XNNPACK unavailable: $e');
+      }
+    } else if (Platform.isIOS || Platform.isMacOS) {
+      try {
+        _sessionOptions!.appendCoreMLProvider(CoreMLFlags.useNone);
+        debugPrint('OnnxSiglipInference: CoreML execution provider enabled');
+      } catch (e) {
+        debugPrint('OnnxSiglipInference: CoreML unavailable: $e');
+      }
+    }
   }
 
   /// Load the vision encoder model.
