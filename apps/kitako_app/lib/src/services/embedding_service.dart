@@ -81,7 +81,7 @@ class EmbeddingService {
   static const String _siglip2TokenizerAsset = 'assets/models/tokenizer/tokenizer.json';
 
   /// Asset path for fine-tuned SigLIP tokenizer (256K vocabulary, from model folder)
-  static const String _finetunedTokenizerAsset = 'assets/model/merged_epoch8_step6024/tokenizer.json';
+  static const String _finetunedTokenizerAsset = 'assets/models/tokenizer/tokenizer.json';
 
   /// Whether the service is initialized
   bool get isInitialized => _isInitialized;
@@ -133,6 +133,11 @@ class EmbeddingService {
   /// Returns `true` if initialization was successful
   Future<bool> initialize() async {
     if (_isInitialized) return true;
+
+    // Copy any models sitting in /data/local/tmp/ into app storage first,
+    // so all subsequent availability checks find them.
+    debugPrint('EmbeddingService: Copying models from /data/local/tmp/ if present...');
+    await _downloadService.copyModelsFromTmp();
 
     // 🔥 Try fine-tuned SigLIP first (BEST - trained on Taglish data)
     debugPrint('EmbeddingService: Checking for fine-tuned SigLIP models...');

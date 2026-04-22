@@ -41,7 +41,7 @@ class ModelDownloadService {
   /// NOTE: Using older *_quantized.onnx models (not *_int8.onnx) for SigLIP-1 because:
   /// - int8 models use ConvInteger(10) which isn't supported by ONNX Runtime Mobile
   /// - The older quantized models use compatible dynamic quantization
-  static const int modelVersion = 6; // Added fine-tuned SigLIP model
+  static const int modelVersion = 7; // Updated fine-tuned SigLIP to merged_epoch3_end_ver2
 
   static const Map<String, ModelInfo> models = {
     // SigLIP-1 ALIGNED (RECOMMENDED - correctly aligned embeddings)
@@ -91,18 +91,18 @@ class ModelDownloadService {
       requiresManualSetup: true, // Too large for auto-download from HF
     ),
 
-    // Fine-tuned SigLIP (merged_epoch8_step6024) - trained on KitaKo Taglish data
+    // Fine-tuned SigLIP (merged_epoch3_end_ver2) - retrained on KitaKo Taglish data
     'finetuned_vision': ModelInfo(
-      filename: 'finetuned_vision_model_fp32.onnx',
-      expectedSizeBytes: 371781840, // ~354 MB
-      description: 'Fine-tuned SigLIP Vision Encoder (FP32, 224x224, Taglish)',
+      filename: 'merged_epoch3_end_vision_fp32.onnx',
+      expectedSizeBytes: 371793836, // ~354 MB
+      description: 'Fine-tuned SigLIP Vision Encoder (FP32, 224x224, Taglish, epoch3)',
       modelType: ModelType.finetunedSiglip,
       requiresManualSetup: true,
     ),
     'finetuned_text': ModelInfo(
-      filename: 'finetuned_text_model_fp32.onnx',
-      expectedSizeBytes: 1129424626, // ~1077 MB
-      description: 'Fine-tuned SigLIP Text Encoder (FP32, 256K vocab, Taglish)',
+      filename: 'merged_epoch3_end_text_fp32.onnx',
+      expectedSizeBytes: 1129436287, // ~1077 MB
+      description: 'Fine-tuned SigLIP Text Encoder (FP32, 256K vocab, Taglish, epoch3)',
       modelType: ModelType.finetunedSiglip,
       requiresManualSetup: true,
     ),
