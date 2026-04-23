@@ -9,7 +9,7 @@ import 'embedding_service_stub.dart'
 // Re-export types so consumers get them from the same conditional source
 export 'embedding_service_stub.dart'
     if (dart.library.io) 'package:kitako_embedding/kitako_embedding.dart'
-    show SiglipModelVersion, SiglipModelConfig;
+    show SiglipModelVersion, SiglipModelConfig, ModelVariant;
 
 import 'model_download_service.dart';
 
@@ -55,8 +55,7 @@ class EmbeddingService {
   /// Embedding dimension (SigLIP)
   static const int embeddingDimension = 768;
 
-  /// Asset path for tokenizer (bundled with app)
-  static const String _tokenizerAsset = 'assets/models/tokenizer/tokenizer.json';
+  // Tokenizer path is resolved at runtime via _downloadService.getTokenizerPath().
 
   /// Current active model variant
   ModelVariant? _activeVariant;
@@ -113,6 +112,12 @@ class EmbeddingService {
       debugPrint('EmbeddingService: copyModelsFromTmp: $e');
     }
 
+    // Try Kitako FP32 (FP32 vision + FP32 text) — highest quality, dev-only
+    debugPrint('EmbeddingService: Checking for Kitako FP32 (FP32 vision + FP32 text)...');
+    if (await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_fp32', ModelVariant.kitakoFp32)) {
+      return true;
+    }
+
     // Try Kitako Mixed (FP32 vision + INT8 text) — primary config
     debugPrint('EmbeddingService: Checking for Kitako Mixed (FP32 vision + INT8 text)...');
     if (await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_int8', ModelVariant.kitakoMixed)) {
@@ -162,17 +167,18 @@ class EmbeddingService {
 
       final visionPath = await _downloadService.getModelPath(visionKey);
       final textPath = await _downloadService.getModelPath(textKey);
+      final tokenizerPath = await _downloadService.getTokenizerPath();
 
       debugPrint('EmbeddingService: Loading ${variant.displayName} from:');
       debugPrint('  Vision: $visionPath');
       debugPrint('  Text: $textPath');
-      debugPrint('  Tokenizer: $_tokenizerAsset');
+      debugPrint('  Tokenizer: $tokenizerPath');
 
       _onnxClient = OnnxEmbeddingService();
       await _onnxClient!.initialize(
         visionModelPath: visionPath,
         textModelPath: textPath,
-        tokenizerPath: _tokenizerAsset,
+        tokenizerPath: tokenizerPath,
         modelVersion: SiglipModelVersion.siglip2,
       );
 
@@ -199,6 +205,15 @@ class EmbeddingService {
     }
   }
 
+  /// Whether both model files required for [variant] exist on disk.
+  ///
+  /// This does not attempt to open them — use [switchToVariant] for that.
+  Future<bool> isVariantAvailable(ModelVariant variant) async {
+    final visionReady = await _downloadService.isModelAvailable(variant.visionEncoderId);
+    final textReady = await _downloadService.isModelAvailable(variant.textEncoderId);
+    return visionReady && textReady;
+  }
+
   /// Switch to a specific model variant
   ///
   /// [variant] - The model variant to use (from ModelVariant enum)
@@ -222,6 +237,9 @@ class EmbeddingService {
 
     bool success = false;
     switch (variant) {
+      case ModelVariant.kitakoFp32:
+        success = await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_fp32', variant);
+        break;
       case ModelVariant.kitakoMixed:
         success = await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_int8', variant);
         break;
@@ -266,7 +284,7 @@ class EmbeddingService {
       throw StateError('ONNX text encoder not ready.');
     }
 
-    final float32Embedding = _onnxClient!.embedText(normalizedQuery);
+    final float32Embedding = await _onnxClient!.embedText(normalizedQuery);
     final embedding = float32Embedding.toList();
 
     _cacheEmbedding(normalizedQuery, embedding);
@@ -289,7 +307,7 @@ class EmbeddingService {
       throw StateError('ONNX image encoder not ready.');
     }
 
-    final float32Embedding = _onnxClient!.embedImage(imageBytes);
+    final float32Embedding = await _onnxClient!.embedImage(imageBytes);
     return float32Embedding.toList();
   }
 

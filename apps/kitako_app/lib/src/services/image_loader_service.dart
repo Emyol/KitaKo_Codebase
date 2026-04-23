@@ -8,7 +8,7 @@ import '../models/search_models.dart';
 /// Service for loading and managing device images from the test dataset.
 ///
 /// Only loads images from the test dataset directory — either copied from
-/// ADB staging (`/data/local/tmp/test_images/test`) or already present in
+/// ADB staging (`/data/local/tmp/test_images/`) or already present in
 /// the app's external storage (`<extDir>/test_images/`).
 class ImageLoaderService {
   /// Cache of loaded images
@@ -37,7 +37,9 @@ class ImageLoaderService {
   ///
   /// Looks for test images in order:
   ///   1. App's external dir (survives flutter re-runs, deleted on uninstall)
-  ///   2. /data/local/tmp/test_images/test (where `adb push` lands)
+  ///   2. /data/local/tmp/test_images/ (where `adb push` lands; flat layout
+  ///      with image files directly in the folder)
+  ///   3. /data/local/tmp/test_images/test/ (legacy nested layout)
   ///
   /// Returns `true` if initialization was successful.
   Future<bool> initialize() async {
@@ -50,10 +52,19 @@ class ImageLoaderService {
 
         // Copy from ADB staging if app dir is empty/missing
         if (!await appTestDir.exists() || await _isDirEmpty(appTestDir)) {
-          // adb push creates a nested subdir with the pushed folder's name
-          final tmpTestDir = Directory('/data/local/tmp/test_images/test');
-          if (await tmpTestDir.exists() && !await _isDirEmpty(tmpTestDir)) {
-            debugPrint('ImageLoaderService: Copying test images from ADB staging to app dir...');
+          // Pick whichever ADB staging layout has images: flat or legacy nested.
+          Directory? tmpTestDir;
+          for (final candidate in [
+            Directory('/data/local/tmp/test_images'),
+            Directory('/data/local/tmp/test_images/test'),
+          ]) {
+            if (await candidate.exists() && !await _isDirEmpty(candidate)) {
+              tmpTestDir = candidate;
+              break;
+            }
+          }
+          if (tmpTestDir != null) {
+            debugPrint('ImageLoaderService: Copying test images from ${tmpTestDir.path} to app dir...');
             await appTestDir.create(recursive: true);
             int copied = 0;
             await for (final entity in tmpTestDir.list()) {
@@ -91,7 +102,7 @@ class ImageLoaderService {
       // No test dataset found
       debugPrint('ImageLoaderService: No test dataset found in app dir or ADB staging.');
       debugPrint('ImageLoaderService: Push test images via ADB:');
-      debugPrint('  adb push <local_test_images_folder> /data/local/tmp/test_images');
+      debugPrint('  adb push <local_folder>/. /data/local/tmp/test_images/');
       _isInitialized = true;
       return true;
     } catch (e) {

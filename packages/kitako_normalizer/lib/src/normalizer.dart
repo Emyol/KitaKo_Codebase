@@ -44,6 +44,10 @@ class TaglishNormalizer {
     // Step 2: Apply dictionary mappings
     result = _applyDictionary(result);
 
+    // Step 2b: Apply context-sensitive substitutions (whole-token matching,
+    // prevents mid-word matches; see contextSensitiveDictionary in rules.dart)
+    result = _applyContextSensitive(result);
+
     // Step 3: Remove apostrophes
     result = result.replaceAll("'", '');
 
@@ -83,16 +87,41 @@ class TaglishNormalizer {
     return result;
   }
 
-  /// Collapses 3+ consecutive identical characters to 1.
-  /// Matches Python: re.sub(r"(.)\1{2,}", r"\1", text)
+  /// Applies context-sensitive substitutions using exact whole-token matching.
   ///
-  /// Example: "hellooo" → "helo", "niceeee" → "nice"
+  /// Splits text on whitespace and checks each token against
+  /// [contextSensitiveDictionary]. The lowercase guard is preserved for
+  /// documentation intent — all tokens are already lowercase after Step 1,
+  /// but the check makes the constraint explicit and future-proofs the method
+  /// against pipeline reordering.
+  ///
+  /// This step runs after [_applyDictionary] so that multi-word matches
+  /// (e.g., 'san yung' → 'saan iyon') are consumed first, preventing the
+  /// context-sensitive 'san' → 'saan' from double-firing on the same token.
+  String _applyContextSensitive(String text) {
+    final tokens = text.split(' ');
+    final result = tokens.map((token) {
+      if (token == token.toLowerCase()) {
+        return contextSensitiveDictionary[token] ?? token;
+      }
+      return token;
+    });
+    return result.join(' ');
+  }
+
+  /// Collapses 3+ consecutive identical characters to 2.
+  ///
+  /// Preserves emphasis signal for the encoder while removing excessive
+  /// noise. Collapsing to 1 is too aggressive — "hellooooo" → "helloo",
+  /// not "helo". See DESIGN DECISION #2 in rules.dart block comment.
+  ///
+  /// Example: "hellooooo" → "helloo", "sobraaang" → "sobraang", "aaa" → "aa"
   String _collapseRepeatedChars(String text) {
-    // Regex: any character followed by 2+ of the same character
-    // Replace with just the first occurrence
+    // Regex: any character followed by 2+ of the same character.
+    // Replace the entire run with exactly 2 copies of that character.
     return text.replaceAllMapped(
       RegExp(r'(.)\1{2,}'),
-      (match) => match.group(1)!,
+      (match) => match.group(1)! + match.group(1)!,
     );
   }
 

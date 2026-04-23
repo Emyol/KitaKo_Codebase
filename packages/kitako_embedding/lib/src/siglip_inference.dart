@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
-import 'package:onnxruntime/onnxruntime.dart';
+import 'package:onnxruntime_v2/onnxruntime_v2.dart';
 
 /// SigLIP inference service for generating image and text embeddings.
 ///
@@ -40,10 +40,7 @@ class SiglipInference {
       final modelData = await rootBundle.load(modelPath);
       final modelBytes = modelData.buffer.asUint8List();
 
-      final sessionOptions = OrtSessionOptions();
-      // Enable multi-threading for faster inference
-      sessionOptions.setIntraOpNumThreads(4);
-      sessionOptions.setInterOpNumThreads(2);
+      final sessionOptions = _buildSessionOptions();
       _imageSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
       _isImageModelLoaded = true;
     } catch (e) {
@@ -53,17 +50,13 @@ class SiglipInference {
   }
 
   /// Loads the image encoder model from a file path (not asset).
+  ///
+  /// Uses [OrtSession.fromFile] so the native runtime mmaps the model directly
+  /// — avoids OOM on multi-GB FP32 weights that can't fit in the Dart heap.
   Future<void> loadImageModelFromFile(String filePath) async {
     try {
-      // Read file as bytes to avoid path encoding issues on Windows
-      final file = File(filePath);
-      final modelBytes = await file.readAsBytes();
-      
-      final sessionOptions = OrtSessionOptions();
-      // Enable multi-threading for faster inference
-      sessionOptions.setIntraOpNumThreads(4);
-      sessionOptions.setInterOpNumThreads(2);
-      _imageSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
+      final sessionOptions = _buildSessionOptions();
+      _imageSession = OrtSession.fromFile(File(filePath), sessionOptions);
       _isImageModelLoaded = true;
     } catch (e) {
       _isImageModelLoaded = false;
@@ -78,10 +71,7 @@ class SiglipInference {
       final modelData = await rootBundle.load(modelPath);
       final modelBytes = modelData.buffer.asUint8List();
 
-      final sessionOptions = OrtSessionOptions();
-      // Enable multi-threading for faster inference
-      sessionOptions.setIntraOpNumThreads(4);
-      sessionOptions.setInterOpNumThreads(2);
+      final sessionOptions = _buildSessionOptions();
       _textSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
       _isTextModelLoaded = true;
     } catch (e) {
@@ -91,22 +81,46 @@ class SiglipInference {
   }
 
   /// Loads the text encoder model from a file path (not asset).
+  ///
+  /// Uses [OrtSession.fromFile] so the native runtime mmaps the model directly
+  /// — avoids OOM on multi-GB FP32 weights that can't fit in the Dart heap.
   Future<void> loadTextModelFromFile(String filePath) async {
     try {
-      // Read file as bytes to avoid path encoding issues on Windows
-      final file = File(filePath);
-      final modelBytes = await file.readAsBytes();
-      
-      final sessionOptions = OrtSessionOptions();
-      // Enable multi-threading for faster inference
-      sessionOptions.setIntraOpNumThreads(4);
-      sessionOptions.setInterOpNumThreads(2);
-      _textSession = OrtSession.fromBuffer(modelBytes, sessionOptions);
+      final sessionOptions = _buildSessionOptions();
+      _textSession = OrtSession.fromFile(File(filePath), sessionOptions);
       _isTextModelLoaded = true;
     } catch (e) {
       _isTextModelLoaded = false;
       rethrow;
     }
+  }
+
+  /// Builds session options with threading and platform GPU acceleration.
+  ///
+  /// Priority: NNAPI (Android) / CoreML (iOS/macOS) → CPU fallback.
+  /// Each model load call creates its own options instance.
+  OrtSessionOptions _buildSessionOptions() {
+    final opts = OrtSessionOptions();
+    // Native C++ thread pool for intra/inter operator parallelism.
+    opts.setIntraOpNumThreads(4);
+    opts.setInterOpNumThreads(2);
+
+    // Platform-specific hardware acceleration (graceful fallback to CPU).
+    if (Platform.isAndroid) {
+      try {
+        opts.appendNnapiProvider(NnapiFlags.useNone);
+      } catch (_) {
+        // NNAPI not available on this device — CPU will be used.
+      }
+    } else if (Platform.isIOS || Platform.isMacOS) {
+      try {
+        opts.appendCoreMLProvider(CoreMLFlags.useNone);
+      } catch (_) {
+        // CoreML not available — CPU will be used.
+      }
+    }
+
+    return opts;
   }
 
   /// Generates an embedding from a preprocessed image.
@@ -140,14 +154,17 @@ class SiglipInference {
     final runOptions = OrtRunOptions();
 
     try {
-      // Run inference
-      final outputs = await _imageSession!.runAsync(
+      // Run inference — runOnceAsync creates a fresh isolate per call so
+      // multiple images can be embedded in parallel without hitting the
+      // "isolate already processing" error.  The OrtSession is thread-safe
+      // at the native C++ level and handles concurrent FFI calls correctly.
+      final outputs = await _imageSession!.runOnceAsync(
         runOptions,
         {inputNames.first: inputOrt},
       );
 
       // Extract output tensor
-      if (outputs == null || outputs.isEmpty) {
+      if (outputs.isEmpty) {
         throw StateError('Model produced no output');
       }
 
@@ -205,23 +222,28 @@ class SiglipInference {
       throw StateError('Text model not loaded. Call loadTextModel first.');
     }
 
-    // Ensure we have exactly maxTextLength tokens
+    // Ensure we have exactly maxTextLength tokens.
+    //
+    // GemmaTokenizer.encode() returns HF-style right-padded tokens
+    // ([t0, ..., EOS, PAD, PAD, ...]) of length maxTextLength. If a caller
+    // hands us raw, unpadded tokens we right-pad here too: keep the FIRST
+    // maxTextLength so any trailing EOS is preserved relative to the content.
     List<int> paddedTokens;
-    List<int> attentionMask;
 
     if (tokenIds.length >= maxTextLength) {
       paddedTokens = tokenIds.sublist(0, maxTextLength);
-      attentionMask = List.filled(maxTextLength, 1); // All tokens are real
     } else {
-      paddedTokens = List<int>.from(tokenIds)
-        ..addAll(List.filled(maxTextLength - tokenIds.length, 0)); // pad with 0
-
-      // Attention mask: 1 for real tokens, 0 for padding
-      attentionMask = List.filled(tokenIds.length, 1)
-        ..addAll(List.filled(maxTextLength - tokenIds.length, 0));
+      final padCount = maxTextLength - tokenIds.length;
+      paddedTokens = [
+        ...tokenIds,                         // real tokens first
+        ...List<int>.filled(padCount, 0),    // PAD on the right
+      ];
     }
 
-    // Create input tensors with shape [1, 32]
+    // Match external query pipeline policy: keep all mask positions visible.
+    final attentionMask = List<int>.filled(maxTextLength, 1);
+
+    // Create input tensors with shape [1, maxTextLength]
     final inputIdsOrt = OrtValueTensor.createTensorWithDataList(
       paddedTokens,
       [1, maxTextLength],
@@ -237,17 +259,16 @@ class SiglipInference {
     final runOptions = OrtRunOptions();
 
     try {
-      // Run inference with both input_ids and attention_mask
-      final outputs = await _textSession!.runAsync(
-        runOptions,
-        {
-          inputNames[0]: inputIdsOrt,  // Usually 'input_ids'
-          inputNames[1]: attentionMaskOrt,  // Usually 'attention_mask'
-        },
-      );
+      // Build inputs — only include attention_mask if the model declares it.
+      final inputMap = <String, OrtValueTensor>{inputNames[0]: inputIdsOrt};
+      if (inputNames.length > 1) {
+        inputMap[inputNames[1]] = attentionMaskOrt;
+      }
+
+      final outputs = await _textSession!.runOnceAsync(runOptions, inputMap);
 
       // Extract output tensor
-      if (outputs == null || outputs.isEmpty) {
+      if (outputs.isEmpty) {
         throw StateError('Model produced no output');
       }
 

@@ -79,6 +79,14 @@ class ImageItem {
   String toString() => 'ImageItem(id: $id, path: $path)';
 }
 
+/// A search result paired with its similarity score.
+class SearchResultWithScore {
+  final ImageItem image;
+  final double similarity;
+
+  const SearchResultWithScore({required this.image, required this.similarity});
+}
+
 /// Result of a search operation
 class SearchResult {
   /// List of images matching the search query
@@ -91,7 +99,10 @@ class SearchResult {
   /// Query used for search
   final String query;
 
-  /// Time taken to perform search in milliseconds
+  /// Time taken to generate the query embedding (ONNX inference) in milliseconds
+  final int? embeddingTimeMs;
+
+  /// Time taken to search the ANN index in milliseconds
   final int? searchTimeMs;
 
   /// Total number of images scanned
@@ -101,6 +112,7 @@ class SearchResult {
     required this.images,
     required this.query,
     this.scores,
+    this.embeddingTimeMs,
     this.searchTimeMs,
     this.totalScanned,
   });
@@ -120,6 +132,18 @@ class SearchResult {
   @override
   String toString() =>
       'SearchResult(query: $query, results: $resultCount, timeMs: $searchTimeMs)';
+}
+
+/// Confidence level of a search result, used to decide whether to show suggestions.
+enum QueryConfidence {
+  /// Top result score is strong — no suggestions needed.
+  strong,
+
+  /// Top result score is low but non-zero — show soft suggestions alongside results.
+  weak,
+
+  /// Zero results or all scores below floor — show suggestions prominently.
+  failed,
 }
 
 /// Status of a search operation
@@ -160,6 +184,13 @@ class SearchState {
   /// Query image thumbnail for image-to-image search
   final Uint8List? queryImage;
 
+  /// Alternative query suggestions generated when confidence is weak or failed.
+  /// Null when no suggestions were generated (e.g. strong result or image search).
+  final List<String>? suggestions;
+
+  /// Confidence level of the last search result.
+  final QueryConfidence? queryConfidence;
+
   const SearchState({
     this.status = SearchStatus.idle,
     this.query = '',
@@ -167,6 +198,8 @@ class SearchState {
     this.result,
     this.error,
     this.queryImage,
+    this.suggestions,
+    this.queryConfidence,
   });
 
   /// Whether this is an image-to-image search
@@ -180,6 +213,8 @@ class SearchState {
     SearchResult? result,
     String? error,
     Uint8List? queryImage,
+    List<String>? suggestions,
+    QueryConfidence? queryConfidence,
   }) {
     return SearchState(
       status: status ?? this.status,
@@ -188,6 +223,8 @@ class SearchState {
       result: result ?? this.result,
       error: error ?? this.error,
       queryImage: queryImage ?? this.queryImage,
+      suggestions: suggestions ?? this.suggestions,
+      queryConfidence: queryConfidence ?? this.queryConfidence,
     );
   }
 

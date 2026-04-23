@@ -36,6 +36,11 @@ class GemmaTokenizer {
   /// Whether the tokenizer has been loaded
   bool get isLoaded => _isLoaded;
 
+  /// Loads the tokenizer from a Flutter asset path.
+  ///
+  /// [assetPath] should be an asset path (e.g., 'assets/models/tokenizer/tokenizer.json').
+  Future<void> loadFromAsset(String assetPath) => loadFromFile(assetPath);
+
   /// Loads the tokenizer from a tokenizer.json file (HuggingFace format).
   ///
   /// [tokenizerJsonPath] can be an asset path (starting with 'assets/') or a file path.
@@ -124,13 +129,22 @@ class GemmaTokenizer {
 
   /// Tokenizes text into token IDs.
   ///
-  /// Returns a list of token IDs, right-aligned and padded/truncated to
-  /// [maxLength]. Right-alignment places PAD tokens at the beginning and
-  /// the EOS token at the last position (index maxLength-1).
+  /// Mirrors the HuggingFace AutoTokenizer pipeline used by SigLIP-2's
+  /// SiglipProcessor + GemmaTokenizerFast (as called from external_test/query.py
+  /// with `padding='max_length', max_length=64, truncation=True`).
   ///
-  /// This is required because the ONNX text encoder uses Gather(index=-1)
-  /// to extract the pooled representation, so the meaningful token (EOS)
-  /// must be at the last position for correct cross-modal alignment.
+  /// Pipeline:
+  ///   1. Normalizer: replace ASCII space with `▁` (Metaspace marker).
+  ///   2. BPE encode (byte_fallback + fuse_unk per tokenizer.json model flags).
+  ///   3. Post-processor template: append `<eos>` (id=1) at the end.
+  ///   4. Truncate from the front to fit `maxLength` (preserves the appended
+  ///      EOS at the boundary, matching HF default truncation).
+  ///   5. Right-pad with `<pad>` (id=0) up to `maxLength`
+  ///      (HF `padding_side='right'`, `tokenizer.json` direction `Right`).
+  ///
+  /// Result layout: `[t0, t1, ..., tN, <eos>, <pad>, <pad>, ...]` (length 64).
+  /// The text encoder receives an attention_mask forced to all-1s (see
+  /// `siglip_inference.dart`) so the model can locate EOS dynamically.
   List<int> encode(String text) {
     if (!_isLoaded) {
       throw StateError('Tokenizer not loaded. Call loadFromFile first.');
@@ -138,21 +152,24 @@ class GemmaTokenizer {
 
     List<int> tokens = _tokenize(text);
 
-    // Add EOS token
+    // Truncate from the front so we leave room for the appended EOS.
+    final maxContent = addEosToken ? maxLength - 1 : maxLength;
+    if (tokens.length > maxContent) {
+      tokens = tokens.sublist(0, maxContent);
+    }
+
+    // Post-processor: append EOS at the end.
     if (addEosToken) {
       tokens.add(eosTokenId);
     }
 
-    // Truncate (keep last maxLength tokens to preserve EOS at the end)
-    if (tokens.length > maxLength) {
-      tokens = tokens.sublist(tokens.length - maxLength);
+    // Right-pad with PAD tokens (HF padding_side='right').
+    final padCount = maxLength - tokens.length;
+    if (padCount > 0) {
+      tokens.addAll(List<int>.filled(padCount, padTokenId));
     }
 
-    // Right-align: prepend PAD tokens so EOS lands at position maxLength-1
-    final padCount = maxLength - tokens.length;
-    final padded = List<int>.filled(padCount, padTokenId, growable: true)..addAll(tokens);
-
-    return padded;
+    return tokens;
   }
 
   /// Tokenizes text without padding (raw tokens).
@@ -190,31 +207,22 @@ class GemmaTokenizer {
     return tokens.join('').replaceAll('▁', ' ').trim();
   }
 
-  /// Full tokenization pipeline matching GemmaTokenizer behavior:
-  /// 1. Lowercase
-  /// 2. Normalizer: replace " " with "▁"
-  /// 3. Pre-tokenizer: split on " " with MergedWithPrevious
-  /// 4. BPE encode each piece
-  /// 5. Byte fallback for unknown characters
+  /// Pre-tokenization + BPE matching the HF tokenizer.json pipeline:
+  ///
+  /// - Normalizer (`Replace " " -> "▁"`): only replaces existing spaces.
+  ///   Does **not** lowercase. Although `tokenizer_config.json` carries
+  ///   `do_lower_case: true`, that flag applies to the slow Python tokenizer;
+  ///   the fast tokenizer.json (which the HF AutoTokenizer actually uses for
+  ///   SigLIP-2) has no Lowercase normalizer, so input case is preserved.
+  ///   E.g. 'Hello' -> id 4521, 'hello' -> id 17534 — different tokens.
+  ///
+  /// - Pre-tokenizer (`Split " " MergedWithPrevious`): a no-op after the
+  ///   normalizer since all spaces are already `▁`. We do NOT prepend an
+  ///   extra leading `▁`; HF only adds `▁` where ASCII spaces existed.
+  ///
+  /// - BPE model with `byte_fallback=true`, `fuse_unk=true`.
   List<int> _tokenize(String text) {
-    // GemmaTokenizer: do_lower_case = true
-    text = text.toLowerCase().trim();
-
-    // Normalizer: replace spaces with ▁ (SentencePiece convention)
-    // The normalizer replaces " " with "▁" before pre-tokenization
     text = text.replaceAll(' ', '▁');
-
-    // Pre-tokenizer: Split on " " with MergedWithPrevious
-    // After normalization, spaces are already ▁, so we split on the original
-    // word boundaries. The "MergedWithPrevious" behavior means the delimiter
-    // is merged with the preceding token.
-    // In practice for GemmaTokenizer: prepend ▁ to the full text, then
-    // the BPE operates on the whole normalized string.
-    // The normalizer already replaced spaces with ▁, so now prepend ▁ to mark
-    // the start of the text (SentencePiece adds ▁ at the beginning).
-    text = '▁$text';
-
-    // BPE encode
     return _bpeEncode(text);
   }
 

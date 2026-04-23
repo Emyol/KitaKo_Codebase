@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:kitako_normalizer/kitako_normalizer.dart';
 import '../models/search_models.dart';
@@ -7,6 +6,50 @@ import 'image_loader_service.dart';
 import 'embedding_service.dart';
 import 'embedding_storage_service.dart';
 import 'ann_search_service.dart';
+import 'query_assist_service.dart';
+
+/// High-level phase of the startup indexing pipeline.
+enum IndexingPhase {
+  idle,
+  loadingModel,
+  prewarmingVariants,
+  restoringCache,
+  loadingGallery,
+  embedding,
+  savingCache,
+  switchingVariant,
+  ready,
+  error,
+}
+
+/// Progress snapshot emitted during startup indexing and variant switching.
+class IndexingProgress {
+  final IndexingPhase phase;
+  final String message;
+
+  /// Completed count (for phases that iterate — embedding / prewarm).
+  final int? done;
+
+  /// Total count (for phases that iterate — embedding / prewarm).
+  final int? total;
+
+  /// Error message when [phase] is [IndexingPhase.error].
+  final String? error;
+
+  const IndexingProgress({
+    required this.phase,
+    required this.message,
+    this.done,
+    this.total,
+    this.error,
+  });
+
+  /// Fractional progress 0.0–1.0 if known, else null.
+  double? get fraction {
+    if (done == null || total == null || total == 0) return null;
+    return (done! / total!).clamp(0.0, 1.0);
+  }
+}
 
 /// Main orchestrator service for image search functionality
 ///
@@ -39,6 +82,7 @@ class ImageSearchService {
   final ANNSearchService _annSearch;
   final EmbeddingStorageService _storage = EmbeddingStorageService();
   final TaglishNormalizer _normalizer = const TaglishNormalizer();
+  final QueryAssistService _queryAssist = QueryAssistService();
 
   /// Create a new ImageSearchService with optional custom services
   ///
@@ -59,6 +103,13 @@ class ImageSearchService {
   /// Stream controller for image loading updates
   final _imagesLoadedController = StreamController<List<ImageItem>>.broadcast();
 
+  /// Stream controller for indexing progress updates
+  final _progressController = StreamController<IndexingProgress>.broadcast();
+
+  /// Last progress snapshot (so late subscribers see current state)
+  IndexingProgress _lastProgress =
+      const IndexingProgress(phase: IndexingPhase.idle, message: '');
+
   /// Current search state
   SearchState _currentState = const SearchState();
 
@@ -74,13 +125,74 @@ class ImageSearchService {
   /// Stream of images loaded events (notifies when gallery images are available)
   Stream<List<ImageItem>> get imagesLoadedStream => _imagesLoadedController.stream;
 
+  /// Stream of indexing progress events (startup + variant switch).
+  Stream<IndexingProgress> get indexingProgressStream =>
+      _progressController.stream;
+
+  /// Most recent indexing progress snapshot.
+  IndexingProgress get lastProgress => _lastProgress;
+
+  void _emitProgress(
+    IndexingPhase phase,
+    String message, {
+    int? done,
+    int? total,
+    String? error,
+  }) {
+    _lastProgress = IndexingProgress(
+      phase: phase,
+      message: message,
+      done: done,
+      total: total,
+      error: error,
+    );
+    if (!_progressController.isClosed) {
+      _progressController.add(_lastProgress);
+    }
+  }
+
   // ========== Service Access (for Alpha Testing) ==========
-  
+
   /// Access to image loader service (for alpha testing)
   ImageLoaderService get imageLoader => _imageLoader;
-  
+
   /// Access to ANN search service (for alpha testing with brute force)
   ANNSearchService get annSearchService => _annSearch;
+
+  // ========== Algorithm Preference ==========
+
+  /// Whether the user preference is HNSW (`true`), IVF-PQ (`false`), or auto (`null`).
+  bool? get preferHnsw => _annSearch.preferHnsw;
+
+  /// Force exact brute-force search regardless of index state.
+  /// Used by the alpha test screen to compare algorithms head-to-head.
+  void setForceBruteForce(bool force) {
+    _annSearch.forceBruteForceMode = force;
+  }
+
+  /// Snapshot of ANN index state for display in the alpha test screen.
+  Map<String, dynamic> get annIndexStatus => _annSearch.getIndexStats();
+
+  /// Set the preferred search algorithm shown in Settings.
+  ///
+  /// [useHnsw] = `true`  → Accuracy mode  (HNSW)
+  /// [useHnsw] = `false` → Performance mode (IVF-PQ)
+  ///
+  /// When switching to IVF-PQ the index is trained in the background from
+  /// already-stored embeddings. Searches fall back to brute-force until
+  /// training completes (usually a few seconds).
+  void setPreferredAlgorithm(bool useHnsw) {
+    _annSearch.setPreferHnsw(useHnsw);
+    debugPrint(
+      'ImageSearchService: Preferred algorithm set to '
+      '${_annSearch.preferredAlgorithm?.name}',
+    );
+    if (!useHnsw) {
+      // Fire-and-forget: train IVF-PQ from existing embeddings.
+      // Brute-force handles any searches that arrive while training runs.
+      _annSearch.ensureIvfpqReady();
+    }
+  }
 
   /// Current search state (read-only)
   SearchState get currentState => _currentState;
@@ -97,29 +209,49 @@ class ImageSearchService {
   int topK = 20;
 
   /// Absolute floor: any result below this cosine similarity is discarded.
-  /// For SigLIP embeddings, scores below ~0.05 are pure noise.
-  double absoluteThreshold = 0.05;
+  ///
+  /// Observed score ranges for Kitako INT8 model:
+  ///   Image-image: 0.66 – 1.00 (same encoder, no modality gap)
+  ///   Text-image:  0.08 – 0.11 (cross-modal; tight cluster)
+  ///
+  /// For text-image queries a floor of 0.08 removes clear noise while
+  /// keeping genuine matches (~0.10 typical top score).
+  double absoluteThreshold = 0.08;
 
   /// Relative cutoff: results must score at least this fraction of the
-  /// top result's similarity. E.g. 0.4 means "at least 40% of the best match".
-  /// Set to 0.0 to disable relative filtering.
-  double relativeThreshold = 0.4;
+  /// top result's similarity.
+  ///
+  /// Text-image scores cluster tightly (e.g. top=0.106, 5th=0.102 — only
+  /// 0.4% spread). A high relative threshold (0.90) means only results within
+  /// 10% of the best match are kept, which gives meaningful discrimination
+  /// without cutting too aggressively.
+  ///
+  /// For image-image (top ~0.68) this keeps results above ~0.61 — appropriate.
+  double relativeThreshold = 0.90;
 
   /// Whether to auto-index images on load
   bool autoIndex = true;
 
   // ========== Initialization ==========
 
-  /// Initialize all services
+  /// Initialize all services.
   ///
-  /// Must be called before using the search functionality.
+  /// [preferredVariant]  — the model variant to activate after startup.
+  /// [prewarmVariants]   — variants whose ONNX files are loaded once during
+  ///                       startup to verify they are usable. Pass the full
+  ///                       developer-facing set on first launch so a later
+  ///                       model switch can't hit an unloadable model.
   ///
-  /// Returns `true` if all services initialized successfully
-  Future<bool> initialize() async {
+  /// Returns `true` if all services initialized successfully.
+  Future<bool> initialize({
+    ModelVariant? preferredVariant,
+    List<ModelVariant> prewarmVariants = const [],
+  }) async {
     if (_isInitialized) return true;
 
     try {
       debugPrint('ImageSearchService: Initializing...');
+      _emitProgress(IndexingPhase.loadingModel, 'Starting up…');
 
       // Initialize loader and ANN (required)
       final loaderInit = await _imageLoader.initialize();
@@ -127,24 +259,74 @@ class ImageSearchService {
 
       if (!loaderInit || !annInit) {
         debugPrint('ImageSearchService: Loader or ANN failed to initialize');
+        _emitProgress(IndexingPhase.error, 'Storage init failed',
+            error: 'Loader or ANN failed to initialize');
         return false;
       }
 
-      // Initialize embedding service EARLY (before slow thumbnail loading)
-      // so it's ready when the user navigates to the alpha test screen.
-      final embeddingInit = await _embeddingService.initialize();
+      // Load the preferred variant up-front when specified, otherwise fall
+      // back to the default auto-probe.
+      _emitProgress(IndexingPhase.loadingModel,
+          'Loading ${preferredVariant?.displayName ?? "model"}…');
+      bool embeddingInit;
+      if (preferredVariant != null) {
+        embeddingInit =
+            await _embeddingService.switchToVariant(preferredVariant);
+        if (!embeddingInit) {
+          debugPrint('ImageSearchService: Preferred variant '
+              '${preferredVariant.displayName} failed to load — falling back '
+              'to default probe');
+          embeddingInit = await _embeddingService.initialize();
+        }
+      } else {
+        embeddingInit = await _embeddingService.initialize();
+      }
 
-      // Always load device images for gallery display
+      // First-launch prewarm: verify the other declared variants load too.
+      // Uses the shared per-vision-encoder cache, so no extra embedding
+      // happens here — just ONNX session open/close.
+      final currentVariant = _embeddingService.activeVariant;
+      for (final v in prewarmVariants) {
+        if (v == currentVariant) continue;
+        if (!await _embeddingService.isVariantAvailable(v)) {
+          debugPrint(
+              'ImageSearchService: Skipping prewarm for ${v.displayName} '
+              '— files not present');
+          continue;
+        }
+        _emitProgress(IndexingPhase.prewarmingVariants,
+            'Verifying ${v.displayName}…');
+        final ok = await _embeddingService.switchToVariant(v);
+        debugPrint('ImageSearchService: Prewarm ${v.displayName} → '
+            '${ok ? "OK" : "FAILED"}');
+      }
+      // Return to the preferred variant after prewarm.
+      if (prewarmVariants.isNotEmpty && currentVariant != null &&
+          _embeddingService.activeVariant != currentVariant) {
+        _emitProgress(IndexingPhase.loadingModel,
+            'Restoring ${currentVariant.displayName}…');
+        await _embeddingService.switchToVariant(currentVariant);
+      }
+
+      // Load device gallery (thumbnails) so search results can render.
+      _emitProgress(IndexingPhase.loadingGallery, 'Loading device gallery…');
       final allImages = await _imageLoader.loadDeviceImages();
       if (allImages.isNotEmpty) {
-        // Load thumbnails for gallery
         final imagesWithThumbs = <ImageItem>[];
+        final total = allImages.take(1000).length;
+        var done = 0;
         for (final image in allImages.take(1000)) {
           try {
             final withThumb = await _imageLoader.getImageWithThumbnail(image.id);
             imagesWithThumbs.add(withThumb);
           } catch (_) {
             imagesWithThumbs.add(image);
+          }
+          done++;
+          if (done == 1 || done % 50 == 0 || done == total) {
+            _emitProgress(IndexingPhase.loadingGallery,
+                'Loading gallery ($done/$total)…',
+                done: done, total: total);
           }
         }
         _loadedImages = imagesWithThumbs;
@@ -157,6 +339,8 @@ class ImageSearchService {
       if (!embeddingInit) {
         debugPrint('ImageSearchService: Initialized WITHOUT embedding model. '
             'Install ONNX model files to enable search.');
+        _emitProgress(IndexingPhase.ready,
+            'Gallery loaded — no embedding model found');
         return true;
       }
 
@@ -166,9 +350,11 @@ class ImageSearchService {
       }
 
       debugPrint('ImageSearchService: Initialized successfully');
+      _emitProgress(IndexingPhase.ready, 'Ready');
       return true;
     } catch (e) {
       debugPrint('ImageSearchService: Initialization failed: $e');
+      _emitProgress(IndexingPhase.error, 'Startup failed', error: e.toString());
       return false;
     }
   }
@@ -219,15 +405,18 @@ class ImageSearchService {
       final stopwatch = Stopwatch()..start();
 
       // Step 1: Generate embedding for NORMALIZED query
+      final embeddingSw = Stopwatch()..start();
       final queryEmbedding = await _embeddingService.generateEmbedding(normalizedQuery);
+      embeddingSw.stop();
 
       // Step 2: Search with scores (no threshold — combo filter handles it)
+      final searchSw = Stopwatch()..start();
       final scoredResults = await _annSearch.searchSimilarWithScores(
         queryEmbedding,
         k: k,
         threshold: -1.0,
-        forceBruteForce: true,
       );
+      searchSw.stop();
 
       // Step 3: Apply combo filter (absolute floor + relative cutoff)
       final filtered = _applyComboFilter(scoredResults);
@@ -252,14 +441,31 @@ class ImageSearchService {
         'ImageSearchService: Search completed in ${stopwatch.elapsedMilliseconds}ms',
       );
 
-      // Step 5: Update state with results
+      // Step 5: Classify confidence and generate suggestions if needed
+      final confidence = _queryAssist.detectConfidence(
+        scores,
+        imagesWithThumbnails.length,
+      );
+      final suggestions = confidence != QueryConfidence.strong
+          ? _queryAssist.generateSuggestions(normalizedQuery)
+          : null;
+
+      // Step 6: Update state with results
       if (imagesWithThumbnails.isEmpty) {
         _updateState(
           SearchState(
             status: SearchStatus.noResults,
             query: query,
             normalizedQuery: normalizedQuery,
-            result: SearchResult(images: [], scores: [], query: query),
+            suggestions: suggestions,
+            queryConfidence: QueryConfidence.failed,
+            result: SearchResult(
+              images: [],
+              scores: [],
+              query: query,
+              embeddingTimeMs: embeddingSw.elapsedMilliseconds,
+              searchTimeMs: searchSw.elapsedMilliseconds,
+            ),
           ),
         );
       } else {
@@ -268,10 +474,14 @@ class ImageSearchService {
             status: SearchStatus.success,
             query: query,
             normalizedQuery: normalizedQuery,
+            suggestions: suggestions,
+            queryConfidence: confidence,
             result: SearchResult(
               images: imagesWithThumbnails,
               scores: scores,
               query: query,
+              embeddingTimeMs: embeddingSw.elapsedMilliseconds,
+              searchTimeMs: searchSw.elapsedMilliseconds,
             ),
           ),
         );
@@ -339,11 +549,10 @@ class ImageSearchService {
         queryEmbedding,
         k: k,
         threshold: -1.0,
-        forceBruteForce: true,
       );
 
-      // Step 3: Apply combo filter
-      final filtered = _applyComboFilter(scoredResults);
+      // Step 3: Apply combo filter (image-to-image uses a different threshold)
+      final filtered = _applyComboFilter(scoredResults, isImageSearch: true);
 
       // Step 4: Load thumbnails for search results
       debugPrint('ImageSearchService: Loading thumbnails for ${filtered.length} results...');
@@ -480,6 +689,7 @@ class ImageSearchService {
   void dispose() {
     _searchStateController.close();
     _imagesLoadedController.close();
+    _progressController.close();
     _imageLoader.dispose();
     _embeddingService.dispose();
     _annSearch.dispose();
@@ -489,38 +699,61 @@ class ImageSearchService {
 
   // ========== Private Methods ==========
 
-  /// Apply combo relevance filter: absolute floor + relative cutoff.
+  /// Apply relevance filter to search results.
   ///
-  /// 1. Discard any result with similarity < [absoluteThreshold] (noise floor).
-  /// 2. Of the remaining, discard any result whose similarity is less than
-  ///    [relativeThreshold] × (best result's similarity).
+  /// **Text search** (isImageSearch = false):
+  ///   Uses absolute floor + relative cutoff. Scores cluster tightly
+  ///   (~0.08–0.11), so a 90% relative threshold keeps only genuine matches.
+  ///
+  /// **Image search** (isImageSearch = true):
+  ///   Uses absolute floor only (no relative cutoff). The top result is
+  ///   always the self-match (score ≈ 1.0), which would set a cutoff of
+  ///   ≥0.90 and eliminate all real similar images at ~0.66–0.68. Instead,
+  ///   a fixed 0.60 floor keeps all genuinely similar images.
   ///
   /// The input list must already be sorted by similarity descending.
   List<SearchResultWithScore> _applyComboFilter(
-    List<SearchResultWithScore> results,
-  ) {
+    List<SearchResultWithScore> results, {
+    bool isImageSearch = false,
+  }) {
     if (results.isEmpty) return results;
 
-    // Step 1: absolute floor — remove pure noise
+    // TEMP: threshold filtering disabled for testing — return all raw results
+    debugPrint('ImageSearchService: Filter DISABLED — returning all ${results.length} raw results');
+    return results;
+
+    // For image-image: use a fixed 0.60 floor, no relative cutoff.
+    // For text-image: use the configured absolute + relative thresholds.
+    // ignore: dead_code
+    const double imageAbsFloor = 0.60;
+    // ignore: dead_code
+    final double absFloor = isImageSearch ? imageAbsFloor : absoluteThreshold;
+
     final aboveFloor = results
-        .where((r) => r.similarity >= absoluteThreshold)
+        .where((r) => r.similarity >= absFloor)
         .toList();
 
     if (aboveFloor.isEmpty) {
       debugPrint('ImageSearchService: Combo filter: all ${results.length} results '
-          'below absolute floor ($absoluteThreshold)');
+          'below absolute floor ($absFloor)');
       return [];
     }
 
-    // Step 2: relative cutoff — keep results within range of best match
+    if (isImageSearch) {
+      debugPrint('ImageSearchService: Image filter: '
+          '${results.length} raw → ${aboveFloor.length} above floor ($absFloor)');
+      return aboveFloor;
+    }
+
+    // Text search: additional relative cutoff
     final bestScore = aboveFloor.first.similarity;
     final cutoff = bestScore * relativeThreshold;
     final filtered = aboveFloor
         .where((r) => r.similarity >= cutoff)
         .toList();
 
-    debugPrint('ImageSearchService: Combo filter: '
-        '${results.length} raw → ${aboveFloor.length} above floor ($absoluteThreshold) '
+    debugPrint('ImageSearchService: Text filter: '
+        '${results.length} raw → ${aboveFloor.length} above floor ($absFloor) '
         '→ ${filtered.length} above relative cutoff '
         '(${(relativeThreshold * 100).toStringAsFixed(0)}% of best ${bestScore.toStringAsFixed(3)} = ${cutoff.toStringAsFixed(3)})');
 
@@ -566,8 +799,11 @@ class ImageSearchService {
       final imagesToProcess = allImages.take(maxImagesToIndex).toList();
 
       // ── Step 1: Try loading cached embeddings from storage layer ──
-      final modelVariant = _embeddingService.activeVariant?.name ?? 'unknown';
-      final snapshot = await _storage.loadAll(modelVariant);
+      final visionEncoderId =
+          _embeddingService.activeVariant?.visionEncoderId ?? 'unknown';
+      _emitProgress(IndexingPhase.restoringCache,
+          'Restoring cached embeddings…');
+      final snapshot = await _storage.loadAll(visionEncoderId);
 
       int cachedCount = 0;
       Set<String> cachedIds = {};
@@ -615,7 +851,7 @@ class ImageSearchService {
         debugPrint('║          EMBEDDINGS LOADED FROM STORAGE             ║');
         debugPrint('╠══════════════════════════════════════════════════════╣');
         debugPrint('║ Images:  $cachedCount');
-        debugPrint('║ Model:   $modelVariant');
+        debugPrint('║ Encoder: $visionEncoderId');
         debugPrint('║ Search:  Brute-force cosine similarity');
         debugPrint('╚══════════════════════════════════════════════════════╝');
         debugPrint('');
@@ -682,6 +918,12 @@ class ImageSearchService {
           'Embedding: [$bar] $percent%  ($successCount/$total)  '
           '${elapsedSec}s elapsed  ~${etaSec}s remaining  ${avgMs}ms/img',
         );
+        _emitProgress(
+          IndexingPhase.embedding,
+          'Embedding images ($batchEnd/$total)…',
+          done: batchEnd,
+          total: total,
+        );
       }
 
       // Sanity check
@@ -734,7 +976,8 @@ class ImageSearchService {
   /// Save current embeddings via the storage layer.
   Future<void> _saveEmbeddingCache() async {
     try {
-      final modelVariant = _embeddingService.activeVariant?.name ?? 'unknown';
+      final visionEncoderId =
+          _embeddingService.activeVariant?.visionEncoderId ?? 'unknown';
       final embeddings = _annSearch.imageEmbeddings;
       final metadata = _annSearch.imageMetadata;
 
@@ -742,10 +985,11 @@ class ImageSearchService {
 
       final imagePaths = metadata.map((k, v) => MapEntry(k, v.path));
 
+      _emitProgress(IndexingPhase.savingCache, 'Saving embeddings…');
       await _storage.saveAll(
         embeddings: Map<String, Float32List>.from(embeddings),
         imagePaths: imagePaths,
-        modelVariant: modelVariant,
+        visionEncoderId: visionEncoderId,
       );
 
       debugPrint('');
@@ -753,7 +997,7 @@ class ImageSearchService {
       debugPrint('║          EMBEDDINGS SAVED TO STORAGE                ║');
       debugPrint('╠══════════════════════════════════════════════════════╣');
       debugPrint('║ Images:  ${embeddings.length}');
-      debugPrint('║ Model:   $modelVariant');
+      debugPrint('║ Encoder: $visionEncoderId');
       debugPrint('║ Search:  Brute-force cosine similarity');
       debugPrint('╚══════════════════════════════════════════════════════╝');
       debugPrint('');
@@ -784,6 +1028,59 @@ class ImageSearchService {
   }
 
   // ========== Model Management ==========
+
+  /// Switch to a different model variant.
+  ///
+  /// Blocks (via the [indexingProgressStream]) until the new ONNX sessions are
+  /// loaded and any missing image embeddings are ready. When the previous
+  /// variant shared the same vision encoder as [variant], no re-embedding
+  /// occurs — only the text-encoder session is swapped.
+  ///
+  /// Returns `true` if the switch succeeded.
+  Future<bool> switchVariant(ModelVariant variant) async {
+    if (!_isInitialized) {
+      throw StateError('ImageSearchService not initialized');
+    }
+
+    final previousEncoder =
+        _embeddingService.activeVariant?.visionEncoderId;
+
+    _emitProgress(IndexingPhase.switchingVariant,
+        'Switching to ${variant.displayName}…');
+
+    final ok = await _embeddingService.switchToVariant(variant);
+    if (!ok) {
+      _emitProgress(IndexingPhase.error,
+          'Failed to load ${variant.displayName}',
+          error: 'Model files missing or unreadable');
+      return false;
+    }
+
+    final newEncoder = variant.visionEncoderId;
+    if (newEncoder != previousEncoder) {
+      // Vision tower changed — drop the current in-memory ANN index and
+      // rebuild from the new encoder's cache (or re-embed if empty).
+      _annSearch.clearIndex();
+      _indexedCount = 0;
+      await _indexDeviceImages();
+    }
+
+    _emitProgress(IndexingPhase.ready, 'Switched to ${variant.displayName}');
+    return true;
+  }
+
+  /// Delete cached embeddings for the currently active vision encoder.
+  ///
+  /// Useful for dev testing — forces the next startup/index pass to re-embed
+  /// every image with the current model.
+  Future<void> clearCurrentEncoderCache() async {
+    final encoderId = _embeddingService.activeVariant?.visionEncoderId;
+    if (encoderId == null) return;
+    _annSearch.clearIndex();
+    _indexedCount = 0;
+    await _storage.clear(visionEncoderId: encoderId);
+    debugPrint('ImageSearchService: Cleared cache for "$encoderId"');
+  }
 
   /// Re-index all images with the current model
   ///

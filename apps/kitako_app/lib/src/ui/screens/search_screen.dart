@@ -3,14 +3,20 @@ import 'dart:async';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import '../../services/image_search_service.dart';
+import '../../services/search_history_service.dart';
 import '../../models/search_models.dart';
 import 'results_screen.dart';
 import 'details_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   final ImageSearchService searchService;
+  final SearchHistoryService historyService;
 
-  const SearchScreen({super.key, required this.searchService});
+  const SearchScreen({
+    super.key,
+    required this.searchService,
+    required this.historyService,
+  });
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -19,6 +25,7 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  SearchHistoryService get _historyService => widget.historyService;
   StreamSubscription<SearchState>? _searchSubscription;
   StreamSubscription<List<ImageItem>>? _imagesLoadedSubscription;
   late SearchState _currentSearchState;
@@ -30,6 +37,9 @@ class _SearchScreenState extends State<SearchScreen> {
     super.initState();
     // Initialize with current state from service
     _currentSearchState = widget.searchService.currentState;
+
+    // Rebuild when text changes (for history filtering & clear button visibility)
+    _searchController.addListener(_onSearchTextChanged);
 
     // Auto-focus the search field when screen opens
     Future.delayed(const Duration(milliseconds: 300), () {
@@ -64,18 +74,64 @@ class _SearchScreenState extends State<SearchScreen> {
     _indexedImages = widget.searchService.getAllImages();
   }
 
+  void _onSearchTextChanged() => setState(() {});
+
   @override
   void dispose() {
     _searchSubscription?.cancel();
     _imagesLoadedSubscription?.cancel();
+    _searchController.removeListener(_onSearchTextChanged);
     _searchController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
   void _performSearch() {
-    if (_searchController.text.trim().isEmpty) return;
-    widget.searchService.searchImages(_searchController.text.trim());
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    _historyService.addQuery(query);
+    widget.searchService.searchImages(query);
+  }
+
+  /// Fill the search field with a history entry and immediately run the search.
+  void _runHistoryQuery(String query) {
+    _searchController.text = query;
+    _performSearch();
+  }
+
+  /// Tappable suggestion chips shown when a query produces weak or no results.
+  Widget _buildSuggestionChips(List<String> suggestions, String label) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.6),
+                ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: suggestions
+                .map(
+                  (s) => ActionChip(
+                    avatar: const Icon(Icons.search, size: 16),
+                    label: Text(s),
+                    onPressed: () => _runHistoryQuery(s),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -337,6 +393,13 @@ class _SearchScreenState extends State<SearchScreen> {
               'Try searching for something else',
               style: TextStyle(color: textColor.withOpacity(0.6), fontSize: 14),
             ),
+            if (_currentSearchState.suggestions?.isNotEmpty == true) ...[
+              const SizedBox(height: 24),
+              _buildSuggestionChips(
+                _currentSearchState.suggestions!,
+                'Try instead:',
+              ),
+            ],
           ],
         ),
       );
@@ -442,6 +505,16 @@ class _SearchScreenState extends State<SearchScreen> {
               ],
             ),
           ),
+          // Weak-result suggestions (shown when results exist but confidence is low)
+          if (_currentSearchState.queryConfidence == QueryConfidence.weak &&
+              _currentSearchState.suggestions?.isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 4),
+              child: _buildSuggestionChips(
+                _currentSearchState.suggestions!,
+                'Try instead:',
+              ),
+            ),
           // View All Results button
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -552,6 +625,18 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ],
       );
+    }
+
+    // Idle: show recent searches if any match the current input
+    final inputText = _searchController.text.trim().toLowerCase();
+    final historyMatches = inputText.isEmpty
+        ? _historyService.queries
+        : _historyService.queries
+            .where((q) => q.toLowerCase().contains(inputText))
+            .toList();
+
+    if (historyMatches.isNotEmpty) {
+      return _buildHistoryList(isDark, textColor, historyMatches, showClearAll: inputText.isEmpty);
     }
 
     // Default state - show gallery of indexed images
@@ -684,6 +769,80 @@ class _SearchScreenState extends State<SearchScreen> {
                 );
               },
             ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHistoryList(
+    bool isDark,
+    Color textColor,
+    List<String> queries, {
+    required bool showClearAll,
+  }) {
+    final hintColor = isDark ? Colors.white38 : Colors.black38;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 8, 4),
+          child: Row(
+            children: [
+              Text(
+                'Recent Searches',
+                style: TextStyle(
+                  color: textColor.withValues(alpha: 0.5),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const Spacer(),
+              if (showClearAll)
+                TextButton(
+                  onPressed: () async {
+                    await _historyService.clearAll();
+                    setState(() {});
+                  },
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF4A90E2),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('Clear all', style: TextStyle(fontSize: 13)),
+                ),
+            ],
+          ),
+        ),
+        // History items
+        Expanded(
+          child: ListView.builder(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            itemCount: queries.length,
+            itemBuilder: (context, index) {
+              final query = queries[index];
+              return ListTile(
+                dense: true,
+                leading: Icon(Icons.history, color: hintColor, size: 20),
+                title: Text(
+                  query,
+                  style: TextStyle(color: textColor, fontSize: 15),
+                ),
+                trailing: IconButton(
+                  icon: Icon(Icons.close, color: hintColor, size: 18),
+                  splashRadius: 18,
+                  onPressed: () async {
+                    await _historyService.removeQuery(query);
+                    setState(() {});
+                  },
+                ),
+                onTap: () => _runHistoryQuery(query),
+              );
+            },
           ),
         ),
       ],

@@ -7,16 +7,20 @@ import 'alpha_test_screen.dart';
 import 'details_screen.dart';
 import '../theme/theme_notifier.dart';
 import '../../services/image_search_service.dart';
+import '../../services/search_history_service.dart';
+import '../../state/settings_controller.dart';
 import '../../models/search_models.dart';
 
 class HomeScreen extends StatefulWidget {
   final ThemeNotifier themeNotifier;
   final ImageSearchService searchService;
+  final SettingsController settingsController;
 
   const HomeScreen({
     super.key,
     required this.themeNotifier,
     required this.searchService,
+    required this.settingsController,
   });
 
   @override
@@ -26,18 +30,26 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<ImageItem> _images = [];
   StreamSubscription<List<ImageItem>>? _imagesSubscription;
+  StreamSubscription<SearchState>? _searchSubscription;
+  SearchState _searchState = const SearchState();
   bool _isLoading = true;
+  final SearchHistoryService _historyService = SearchHistoryService();
 
   @override
   void initState() {
     super.initState();
     _loadImages();
     _listenForImageUpdates();
+    _listenForSearchState();
+    _historyService.load().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _imagesSubscription?.cancel();
+    _searchSubscription?.cancel();
     super.dispose();
   }
 
@@ -50,6 +62,13 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
         });
       }
+    });
+  }
+
+  void _listenForSearchState() {
+    _searchState = widget.searchService.currentState;
+    _searchSubscription = widget.searchService.searchStateStream.listen((state) {
+      if (mounted) setState(() => _searchState = state);
     });
   }
 
@@ -68,7 +87,10 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
-            SearchScreen(searchService: widget.searchService),
+            SearchScreen(
+              searchService: widget.searchService,
+              historyService: _historyService,
+            ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           const begin = Offset(0.0, 1.0);
           const end = Offset.zero;
@@ -85,69 +107,49 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-    );
+    ).then((_) {
+      // Refresh so the search bar shows the latest query
+      if (mounted) setState(() {});
+    });
   }
 
   void _openSettings() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) =>
-            SettingsScreen(themeNotifier: widget.themeNotifier),
+        builder: (context) => SettingsScreen(
+          themeNotifier: widget.themeNotifier,
+          searchService: widget.searchService,
+          settingsController: widget.settingsController,
+        ),
       ),
     );
   }
 
-  void _openDetails(ImageItem image, int index) {
+  void _openDetails(ImageItem image, int index, {List<ImageItem>? imageList}) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => DetailsScreen(
           image: image,
           searchService: widget.searchService,
-          imageList: _images,
+          imageList: imageList ?? _images,
           currentIndex: index,
+          // popCount=1: pops DetailsScreen back to HomeScreen, which shows results
         ),
       ),
     );
   }
 
   Future<void> _findSimilar(ImageItem image) async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-              ),
-            ),
-            SizedBox(width: 16),
-            Text('Finding similar images...'),
-          ],
-        ),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
-      ),
-    );
-
+    // Results appear directly on HomeScreen via the searchStateStream listener
     try {
       await widget.searchService.searchByImageId(image.id);
-      if (!mounted) return;
-      _openSearch();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to find similar images: $e'),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }
@@ -178,6 +180,276 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Builds the main content area: searching spinner, results grid, or gallery.
+  Widget _buildContent(bool isDark) {
+    final status = _searchState.status;
+
+    // ── Searching ─────────────────────────────────────────────────────────────
+    if (status == SearchStatus.searching) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_searchState.queryImage != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.memory(
+                  _searchState.queryImage!,
+                  width: 72,
+                  height: 72,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A90E2)),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Finding similar images…',
+              style: TextStyle(
+                color: isDark ? Colors.white54 : Colors.black54,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ── Results ───────────────────────────────────────────────────────────────
+    if (status == SearchStatus.success) {
+      final results = _searchState.result?.images ?? [];
+      final scores = _searchState.result?.scores;
+
+      return Column(
+        children: [
+          // Header: query thumbnail + count + close
+          Container(
+            color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF0F0F0),
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+            child: Row(
+              children: [
+                if (_searchState.queryImage != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.memory(
+                      _searchState.queryImage!,
+                      width: 36,
+                      height: 36,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Text(
+                  '${results.length} similar image${results.length == 1 ? '' : 's'}',
+                  style: TextStyle(
+                    color: isDark ? Colors.white70 : Colors.black87,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: Icon(
+                    Icons.close,
+                    color: isDark ? Colors.white54 : Colors.black54,
+                  ),
+                  tooltip: 'Back to gallery',
+                  onPressed: widget.searchService.clearSearch,
+                ),
+              ],
+            ),
+          ),
+          // Results grid
+          Expanded(
+            child: results.isEmpty
+                ? Center(
+                    child: Text(
+                      'No similar images found',
+                      style: TextStyle(
+                        color: isDark ? Colors.white38 : Colors.black38,
+                        fontSize: 14,
+                      ),
+                    ),
+                  )
+                : Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: GridView.builder(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                            childAspectRatio: 1,
+                          ),
+                      itemCount: results.length,
+                      itemBuilder: (context, index) {
+                        final image = results[index];
+                        final score =
+                            scores != null && index < scores.length
+                                ? scores[index]
+                                : null;
+                        return Material(
+                          color: isDark
+                              ? const Color(0xFF2A2A2A)
+                              : const Color(0xFFE0E0E0),
+                          borderRadius: BorderRadius.circular(8),
+                          child: InkWell(
+                            onTap: () =>
+                                _openDetails(image, index, imageList: results),
+                            borderRadius: BorderRadius.circular(8),
+                            splashColor:
+                                isDark ? Colors.white12 : Colors.black12,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  image.thumbnail != null
+                                      ? Image.memory(
+                                          image.thumbnail!,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, _, _) =>
+                                              _buildPlaceholder(image, isDark),
+                                        )
+                                      : _buildPlaceholder(image, isDark),
+                                  // Rank badge
+                                  Positioned(
+                                    top: 4,
+                                    left: 4,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF4A90E2),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        '#${index + 1}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  // Score badge
+                                  if (score != null)
+                                    Positioned(
+                                      bottom: 4,
+                                      right: 4,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 5,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.7,
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          '${(score * 100).toStringAsFixed(1)}%',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+          ),
+        ],
+      );
+    }
+
+    // ── Gallery (idle / noResults / error) ────────────────────────────────────
+    if (_images.isEmpty) {
+      return Center(
+        child: _isLoading
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Loading gallery...',
+                    style: TextStyle(
+                      color: isDark ? Colors.white70 : Colors.black54,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              )
+            : Text(
+                'No images found',
+                style: TextStyle(
+                  color: isDark ? Colors.white70 : Colors.black54,
+                  fontSize: 16,
+                ),
+              ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: GridView.builder(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+          childAspectRatio: 1,
+        ),
+        itemCount: _images.length,
+        itemBuilder: (context, index) {
+          final image = _images[index];
+          return Material(
+            color: isDark
+                ? const Color(0xFF2A2A2A)
+                : const Color(0xFFE0E0E0),
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              onTap: () => _openDetails(image, index),
+              onLongPress: () => _findSimilar(image),
+              borderRadius: BorderRadius.circular(8),
+              splashColor: isDark ? Colors.white12 : Colors.black12,
+              highlightColor: isDark
+                  ? Colors.white10
+                  : Colors.black.withValues(alpha: 0.1),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: image.thumbnail != null
+                    ? Image.memory(
+                        image.thumbnail!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) =>
+                            _buildPlaceholder(image, isDark),
+                      )
+                    : _buildPlaceholder(image, isDark),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -222,74 +494,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Gallery Grid
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: _images.isEmpty
-                  ? Center(
-                      child: _isLoading
-                          ? Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const CircularProgressIndicator(),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'Loading gallery...',
-                                  style: TextStyle(
-                                    color: isDark ? Colors.white70 : Colors.black54,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ],
-                            )
-                          : Text(
-                              'No images found',
-                              style: TextStyle(
-                                color: isDark ? Colors.white70 : Colors.black54,
-                                fontSize: 16,
-                              ),
-                            ),
-                    )
-                  : GridView.builder(
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                            childAspectRatio: 1,
-                          ),
-                      itemCount: _images.length,
-                      itemBuilder: (context, index) {
-                        final image = _images[index];
-                        return Material(
-                          color: isDark
-                              ? const Color(0xFF2A2A2A)
-                              : const Color(0xFFE0E0E0),
-                          borderRadius: BorderRadius.circular(8),
-                          child: InkWell(
-                            onTap: () => _openDetails(image, index),
-                            onLongPress: () => _findSimilar(image),
-                            borderRadius: BorderRadius.circular(8),
-                            splashColor: isDark ? Colors.white12 : Colors.black12,
-                            highlightColor: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.1),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: image.thumbnail != null
-                                  ? Image.memory(
-                                      image.thumbnail!,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) =>
-                                          _buildPlaceholder(image, isDark),
-                                    )
-                                  : _buildPlaceholder(image, isDark),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ),
+          Expanded(child: _buildContent(isDark)),
           // Search Bar at Bottom
           Container(
             padding: const EdgeInsets.all(16),
@@ -331,16 +536,23 @@ class _HomeScreenState extends State<HomeScreen> {
                         size: 24,
                       ),
                       const SizedBox(width: 12),
-                      Text(
-                        'Search...',
-                        style: TextStyle(
-                          color: isDark
-                              ? const Color(0xFF666666)
-                              : const Color(0xFF999999),
-                          fontSize: 16,
+                      Expanded(
+                        child: Text(
+                          _historyService.queries.isNotEmpty
+                              ? _historyService.queries.first
+                              : 'Search...',
+                          style: TextStyle(
+                            color: _historyService.queries.isNotEmpty
+                                ? (isDark ? Colors.white54 : Colors.black54)
+                                : (isDark
+                                    ? const Color(0xFF666666)
+                                    : const Color(0xFF999999)),
+                            fontSize: 16,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                         ),
                       ),
-                      const Spacer(),
                       Icon(
                         Icons.tune,
                         color: isDark

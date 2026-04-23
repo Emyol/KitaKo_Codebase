@@ -4,6 +4,7 @@ import 'src/ui/screens/startup_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/services/image_search_service.dart';
 import 'src/services/model_download_service.dart';
+import 'src/state/settings_controller.dart';
 import 'src/widgets/model_download_gate.dart';
 
 /// KitaKo - Image Retrieval Mobile Application
@@ -18,36 +19,42 @@ Future<void> main() async {
     DeviceOrientation.portraitDown,
   ]);
 
+  // Restore saved preferences (defaults on first launch).
+  final themeNotifier = await ThemeNotifier.load();
+  final settingsController = await SettingsController.load();
+
   // Print model diagnostics at startup (await so it shows before app loads)
   await ModelDownloadService().printModelSetupInstructions();
 
-  runApp(const KitaKoApp());
+  runApp(KitaKoApp(
+    themeNotifier: themeNotifier,
+    settingsController: settingsController,
+  ));
 }
 
 class KitaKoApp extends StatefulWidget {
-  const KitaKoApp({super.key});
+  final ThemeNotifier themeNotifier;
+  final SettingsController settingsController;
+
+  const KitaKoApp({
+    super.key,
+    required this.themeNotifier,
+    required this.settingsController,
+  });
 
   @override
   State<KitaKoApp> createState() => _KitaKoAppState();
 }
 
 class _KitaKoAppState extends State<KitaKoApp> {
-  final ThemeNotifier _themeNotifier = ThemeNotifier();
+  late final ThemeNotifier _themeNotifier = widget.themeNotifier;
+  late final SettingsController _settingsController = widget.settingsController;
   final ImageSearchService _searchService = ImageSearchService();
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeService();
-  }
-
-  Future<void> _initializeService() async {
-    await _searchService.initialize();
-  }
 
   @override
   void dispose() {
     _themeNotifier.dispose();
+    _settingsController.dispose();
     _searchService.dispose();
     super.dispose();
   }
@@ -136,6 +143,7 @@ class _KitaKoAppState extends State<KitaKoApp> {
             child: StartupScreen(
               themeNotifier: _themeNotifier,
               searchService: _searchService,
+              settingsController: _settingsController,
             ),
           ),
         );

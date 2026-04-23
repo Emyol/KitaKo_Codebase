@@ -74,6 +74,51 @@ class KitakoEmbeddingService {
   void dispose() {}
 }
 
+/// Stub for model variant enum (web platform)
+enum ModelVariant {
+  kitakoFp32,
+  kitakoMixed,
+  kitakoInt8,
+  siglip2Baseline;
+
+  String get displayName {
+    switch (this) {
+      case ModelVariant.kitakoFp32:
+        return 'Kitako FP32 (FP32+FP32)';
+      case ModelVariant.kitakoMixed:
+        return 'Kitako Mixed (FP32+INT8)';
+      case ModelVariant.kitakoInt8:
+        return 'Kitako INT8';
+      case ModelVariant.siglip2Baseline:
+        return 'SigLIP-2 Baseline';
+    }
+  }
+
+  String get visionEncoderId {
+    switch (this) {
+      case ModelVariant.kitakoFp32:
+      case ModelVariant.kitakoMixed:
+        return 'kitako_vision_fp32';
+      case ModelVariant.kitakoInt8:
+        return 'kitako_vision_int8';
+      case ModelVariant.siglip2Baseline:
+        return 'siglip2_vision';
+    }
+  }
+
+  String get textEncoderId {
+    switch (this) {
+      case ModelVariant.kitakoFp32:
+        return 'kitako_text_fp32';
+      case ModelVariant.kitakoMixed:
+      case ModelVariant.kitakoInt8:
+        return 'kitako_text_int8';
+      case ModelVariant.siglip2Baseline:
+        return 'siglip2_text';
+    }
+  }
+}
+
 /// Stub for ONNX-based embedding service (web platform)
 class OnnxEmbeddingService {
   bool get isInitialized => false;
@@ -96,11 +141,11 @@ class OnnxEmbeddingService {
     throw UnsupportedError('OnnxEmbeddingService not supported on web');
   }
 
-  Float32List embedText(String text) {
+  Future<Float32List> embedText(String text) async {
     throw UnsupportedError('Not supported on web');
   }
 
-  Float32List embedImage(Uint8List imageBytes) {
+  Future<Float32List> embedImage(Uint8List imageBytes) async {
     throw UnsupportedError('Not supported on web');
   }
 

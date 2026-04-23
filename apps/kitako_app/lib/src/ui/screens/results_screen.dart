@@ -167,7 +167,7 @@ class ResultsScreen extends StatelessWidget {
       shadowColor: Colors.black.withValues(alpha: isDark ? 0.3 : 0.1),
       elevation: 3,
       child: InkWell(
-        onTap: () => _navigateToDetails(context, image),
+        onTap: () => _navigateToDetails(context, image, index),
         borderRadius: BorderRadius.circular(12),
         splashColor: isDark ? Colors.white12 : Colors.black12,
         highlightColor: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.1),
@@ -399,12 +399,17 @@ class ResultsScreen extends StatelessWidget {
   }
 
   /// Navigate to the details screen for a specific image
-  void _navigateToDetails(BuildContext context, ImageItem image) {
+  void _navigateToDetails(BuildContext context, ImageItem image, int index) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => DetailsScreen(
           image: image,
           searchService: searchService,
+          imageList: searchResult.images,
+          currentIndex: index,
+          // Pop both DetailsScreen and ResultsScreen so Find Similar lands
+          // on SearchScreen, which listens to the stream and shows results.
+          popCount: 2,
         ),
       ),
     );

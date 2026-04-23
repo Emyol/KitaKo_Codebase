@@ -12,51 +12,44 @@ class StoredEmbeddingSnapshot {
   /// Image ID → file path (for matching against current device images)
   final Map<String, String> imagePaths;
 
-  /// The model variant that produced these embeddings
-  final String modelVariant;
+  /// The vision encoder ID that produced these embeddings
+  final String visionEncoderId;
 
   const StoredEmbeddingSnapshot({
     required this.embeddings,
     required this.imagePaths,
-    required this.modelVariant,
+    required this.visionEncoderId,
   });
 }
 
 /// Persistence layer for image embeddings.
 ///
-/// This is the **single source of truth** for all on-disk storage related to
-/// the embedding / search pipeline.  No other service should perform file I/O
-/// for these concerns — they export data to this layer and import it back.
+/// Storage is keyed by **vision encoder ID** (e.g. `kitako_vision_fp32`), not
+/// by full model variant. Variants that share the same vision tower (such as
+/// `kitakoFp32` and `kitakoMixed`) can therefore reuse the same image
+/// embeddings, so switching between them costs only a text-encoder reload.
 ///
-/// ## Storage layout
+/// Layout under `getApplicationDocumentsDirectory()/embeddings_cache/`:
 ///
-/// All files live under `getApplicationDocumentsDirectory()/embeddings_cache/`:
-///
-/// | File               | Contents                                        |
-/// |--------------------|-------------------------------------------------|
-/// | `embeddings.bin`   | Binary blob of Float32List vectors (KEMB format) |
-/// | `metadata.json`    | Image id→path map, model variant, timestamp      |
-///
-/// ## Why this is a storage layer
-///
-/// 1. **Single responsibility** — all file I/O for embeddings lives here.
-/// 2. **Information hiding** — callers don't know about binary formats, paths,
-///    or directory structure.
-/// 3. **Clean interface** — [saveAll] / [loadAll] / [clear] are the only
-///    entry points.
-/// 4. **Swappable** — could be replaced with SQLite, cloud storage, etc.
-///    without touching search or ANN logic.
+/// ```
+/// embeddings_cache/
+///   <visionEncoderId>/
+///     embeddings.bin
+///     metadata.json
+///     ivfpq_index.bin
+/// ```
 class EmbeddingStorageService {
   static const String _cacheDirName = 'embeddings_cache';
   static const String _embeddingsFile = 'embeddings.bin';
   static const String _metadataFile = 'metadata.json';
+  static const String _ivfpqFile = 'ivfpq_index.bin';
 
   /// Binary format constants
   static const int _magic = 0x4B454D42; // "KEMB"
-  static const int _version = 1;
+  static const int _version = 2;
 
-  /// Get the cache directory, creating it if necessary.
-  Future<Directory> get _cacheDir async {
+  /// Get the root cache directory, creating it if necessary.
+  Future<Directory> _rootDir() async {
     final appDir = await getApplicationDocumentsDirectory();
     final dir = Directory('${appDir.path}/$_cacheDirName');
     if (!await dir.exists()) {
@@ -65,33 +58,45 @@ class EmbeddingStorageService {
     return dir;
   }
 
+  /// Get the per-vision-encoder cache directory.
+  Future<Directory> _encoderDir(String visionEncoderId) async {
+    final root = await _rootDir();
+    final dir = Directory('${root.path}/$visionEncoderId');
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  /// Path to the IVF-PQ index file for a given vision encoder.
+  Future<String> ivfpqIndexPath(String visionEncoderId) async {
+    final dir = await _encoderDir(visionEncoderId);
+    return '${dir.path}/$_ivfpqFile';
+  }
+
   // ========== Save ==========
 
   /// Persist all embedding data to disk in a single operation.
-  ///
-  /// [embeddings] — image ID → Float32List (768-dim)
-  /// [imagePaths] — image ID → file path on device
-  /// [modelVariant] — name of the model variant (for cache invalidation)
   Future<void> saveAll({
     required Map<String, Float32List> embeddings,
     required Map<String, String> imagePaths,
-    required String modelVariant,
+    required String visionEncoderId,
   }) async {
     if (embeddings.isEmpty) return;
 
-    final dir = await _cacheDir;
+    final dir = await _encoderDir(visionEncoderId);
     final stopwatch = Stopwatch()..start();
 
     await Future.wait([
       _saveEmbeddingsBinary(
         '${dir.path}/$_embeddingsFile',
         embeddings,
-        modelVariant,
+        visionEncoderId,
       ),
       _saveMetadataJson(
         '${dir.path}/$_metadataFile',
         imagePaths,
-        modelVariant,
+        visionEncoderId,
         embeddings.length,
       ),
     ]);
@@ -99,68 +104,82 @@ class EmbeddingStorageService {
     stopwatch.stop();
     final sizeKb = await _fileSizeKb('${dir.path}/$_embeddingsFile');
     debugPrint('EmbeddingStorageService: Saved ${embeddings.length} embeddings '
-        '(${sizeKb.toStringAsFixed(0)} KB) in ${stopwatch.elapsedMilliseconds}ms');
+        'for "$visionEncoderId" (${sizeKb.toStringAsFixed(0)} KB) in '
+        '${stopwatch.elapsedMilliseconds}ms');
   }
 
   // ========== Load ==========
 
-  /// Load all persisted embedding data if it exists and matches the model.
+  /// Load all persisted embedding data for a vision encoder, if any.
   ///
-  /// Returns `null` if the cache is missing, corrupt, or was created with a
-  /// different model variant.
-  Future<StoredEmbeddingSnapshot?> loadAll(String modelVariant) async {
-    final dir = await _cacheDir;
+  /// Returns `null` if the cache is missing or corrupt.
+  Future<StoredEmbeddingSnapshot?> loadAll(String visionEncoderId) async {
+    final dir = await _encoderDir(visionEncoderId);
     final embPath = '${dir.path}/$_embeddingsFile';
     final metaPath = '${dir.path}/$_metadataFile';
 
     if (!await File(embPath).exists() || !await File(metaPath).exists()) {
-      debugPrint('EmbeddingStorageService: No cache found');
+      debugPrint('EmbeddingStorageService: No cache for "$visionEncoderId"');
       return null;
     }
 
     try {
       final stopwatch = Stopwatch()..start();
 
-      // Read metadata first (cheap) to check model variant
       final metaJson =
           jsonDecode(await File(metaPath).readAsString()) as Map<String, dynamic>;
-      final cachedVariant = metaJson['modelVariant'] as String?;
+      final cachedEncoder = metaJson['visionEncoderId'] as String? ??
+          metaJson['modelVariant'] as String?;
 
-      if (cachedVariant != modelVariant) {
-        debugPrint('EmbeddingStorageService: Cache model mismatch '
-            '(cached: $cachedVariant, current: $modelVariant) — ignoring cache');
+      if (cachedEncoder != visionEncoderId) {
+        debugPrint('EmbeddingStorageService: Metadata encoder mismatch '
+            '(cached: $cachedEncoder, expected: $visionEncoderId) — ignoring');
         return null;
       }
 
       final imagePaths = (metaJson['imagePaths'] as Map<String, dynamic>)
           .map((k, v) => MapEntry(k, v as String));
 
-      // Read binary embeddings
-      final embeddings = await _loadEmbeddingsBinary(embPath, modelVariant);
+      final embeddings = await _loadEmbeddingsBinary(embPath, visionEncoderId);
       if (embeddings == null) return null;
 
       stopwatch.stop();
-      debugPrint('EmbeddingStorageService: Loaded ${embeddings.length} cached embeddings '
-          'in ${stopwatch.elapsedMilliseconds}ms');
+      debugPrint('EmbeddingStorageService: Loaded ${embeddings.length} cached '
+          'embeddings for "$visionEncoderId" in '
+          '${stopwatch.elapsedMilliseconds}ms');
 
       return StoredEmbeddingSnapshot(
         embeddings: embeddings,
         imagePaths: imagePaths,
-        modelVariant: modelVariant,
+        visionEncoderId: visionEncoderId,
       );
     } catch (e) {
-      debugPrint('EmbeddingStorageService: Failed to load cache: $e');
+      debugPrint('EmbeddingStorageService: Failed to load cache for '
+          '"$visionEncoderId": $e');
       return null;
     }
   }
 
   // ========== Clear ==========
 
-  /// Delete all persisted data.
-  Future<void> clear() async {
-    final dir = await _cacheDir;
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
+  /// Delete persisted data.
+  ///
+  /// If [visionEncoderId] is provided, only that encoder's cache is removed.
+  /// Otherwise the entire cache root is wiped.
+  Future<void> clear({String? visionEncoderId}) async {
+    if (visionEncoderId != null) {
+      final dir = await _encoderDir(visionEncoderId);
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+        debugPrint(
+            'EmbeddingStorageService: Cleared cache for "$visionEncoderId"');
+      }
+      return;
+    }
+
+    final root = await _rootDir();
+    if (await root.exists()) {
+      await root.delete(recursive: true);
       debugPrint('EmbeddingStorageService: All stored data cleared');
     }
   }
@@ -172,23 +191,22 @@ class EmbeddingStorageService {
   /// Format:
   /// ```
   /// [magic:4][version:4][dimension:4][count:4]
-  /// [variantLen:2][variantBytes...]
+  /// [encoderIdLen:2][encoderIdBytes...]
   /// For each entry:
   ///   [idLen:2][idBytes...][embedding: dim×4 bytes]
   /// ```
   Future<void> _saveEmbeddingsBinary(
     String path,
     Map<String, Float32List> embeddings,
-    String modelVariant,
+    String visionEncoderId,
   ) async {
     if (embeddings.isEmpty) return;
 
     final dimension = embeddings.values.first.length;
-    final variantBytes = utf8.encode(modelVariant);
+    final encoderBytes = utf8.encode(visionEncoderId);
 
-    // Calculate total size
     var totalSize = 16; // header
-    totalSize += 2 + variantBytes.length; // variant string
+    totalSize += 2 + encoderBytes.length;
     for (final entry in embeddings.entries) {
       final idBytes = utf8.encode(entry.key);
       totalSize += 2 + idBytes.length + dimension * 4;
@@ -197,7 +215,6 @@ class EmbeddingStorageService {
     final buffer = Uint8List(totalSize);
     final data = ByteData.sublistView(buffer);
 
-    // Header
     data.setUint32(0, _magic, Endian.little);
     data.setUint32(4, _version, Endian.little);
     data.setUint32(8, dimension, Endian.little);
@@ -205,23 +222,19 @@ class EmbeddingStorageService {
 
     var offset = 16;
 
-    // Model variant string
-    data.setUint16(offset, variantBytes.length, Endian.little);
+    data.setUint16(offset, encoderBytes.length, Endian.little);
     offset += 2;
-    buffer.setRange(offset, offset + variantBytes.length, variantBytes);
-    offset += variantBytes.length;
+    buffer.setRange(offset, offset + encoderBytes.length, encoderBytes);
+    offset += encoderBytes.length;
 
-    // Entries
     for (final entry in embeddings.entries) {
       final idBytes = utf8.encode(entry.key);
 
-      // ID
       data.setUint16(offset, idBytes.length, Endian.little);
       offset += 2;
       buffer.setRange(offset, offset + idBytes.length, idBytes);
       offset += idBytes.length;
 
-      // Embedding (copy float32 bytes directly)
       final embBytes = entry.value.buffer.asUint8List(
         entry.value.offsetInBytes,
         entry.value.lengthInBytes,
@@ -233,15 +246,13 @@ class EmbeddingStorageService {
     await File(path).writeAsBytes(buffer);
   }
 
-  /// Read embeddings from binary blob.
   Future<Map<String, Float32List>?> _loadEmbeddingsBinary(
     String path,
-    String expectedVariant,
+    String expectedEncoder,
   ) async {
     final bytes = await File(path).readAsBytes();
     final data = ByteData.sublistView(bytes);
 
-    // Validate header
     if (bytes.length < 16) return null;
 
     final magic = data.getUint32(0, Endian.little);
@@ -251,7 +262,9 @@ class EmbeddingStorageService {
     }
 
     final version = data.getUint32(4, Endian.little);
-    if (version != _version) {
+    // Accept v1 blobs (old variant-keyed cache) as long as the encoder string
+    // matches, so existing caches keep working after the rename.
+    if (version != _version && version != 1) {
       debugPrint('EmbeddingStorageService: Unsupported version $version');
       return null;
     }
@@ -261,27 +274,24 @@ class EmbeddingStorageService {
 
     var offset = 16;
 
-    // Read variant string
-    final variantLen = data.getUint16(offset, Endian.little);
+    final encoderLen = data.getUint16(offset, Endian.little);
     offset += 2;
-    final variant = utf8.decode(bytes.sublist(offset, offset + variantLen));
-    offset += variantLen;
+    final encoder = utf8.decode(bytes.sublist(offset, offset + encoderLen));
+    offset += encoderLen;
 
-    if (variant != expectedVariant) {
-      debugPrint('EmbeddingStorageService: Binary variant mismatch');
+    if (encoder != expectedEncoder) {
+      debugPrint('EmbeddingStorageService: Binary encoder mismatch '
+          '(have "$encoder", want "$expectedEncoder")');
       return null;
     }
 
-    // Read entries
     final embeddings = <String, Float32List>{};
     for (var i = 0; i < count; i++) {
-      // ID
       final idLen = data.getUint16(offset, Endian.little);
       offset += 2;
       final id = utf8.decode(bytes.sublist(offset, offset + idLen));
       offset += idLen;
 
-      // Embedding
       final embBytes = bytes.sublist(offset, offset + dimension * 4);
       final embedding = Float32List.view(Uint8List.fromList(embBytes).buffer);
       embeddings[id] = embedding;
@@ -296,11 +306,11 @@ class EmbeddingStorageService {
   Future<void> _saveMetadataJson(
     String path,
     Map<String, String> imagePaths,
-    String modelVariant,
+    String visionEncoderId,
     int embeddingCount,
   ) async {
     final meta = {
-      'modelVariant': modelVariant,
+      'visionEncoderId': visionEncoderId,
       'embeddingCount': embeddingCount,
       'savedAt': DateTime.now().toIso8601String(),
       'imagePaths': imagePaths,
