@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -25,18 +26,50 @@ class PeopleScreen extends StatefulWidget {
 class _PeopleScreenState extends State<PeopleScreen> {
   List<Person> _persons = [];
   bool _isLoading = true;
+  bool _indexingRequested = false;
+  FaceServiceStatus _faceStatus = FaceServiceStatus.uninitialized;
+  FaceIndexingState _indexingState = const FaceIndexingState();
+
+  StreamSubscription<FaceServiceStatus>? _statusSub;
+  StreamSubscription<FaceIndexingState>? _indexingSub;
 
   FaceService? get _faceService => widget.searchService.faceService;
 
   @override
   void initState() {
     super.initState();
+    final face = _faceService;
+    if (face != null) {
+      _faceStatus = face.status;
+      _statusSub = face.statusStream.listen((s) {
+        if (!mounted) return;
+        setState(() => _faceStatus = s);
+        if (s == FaceServiceStatus.ready) _loadPersons();
+      });
+      _indexingSub = face.indexingStream.listen((state) {
+        if (!mounted) return;
+        setState(() => _indexingState = state);
+      });
+    }
     _loadPersons();
+  }
+
+  @override
+  void dispose() {
+    _statusSub?.cancel();
+    _indexingSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _startFaceIndexing() async {
+    setState(() => _indexingRequested = true);
+    await widget.searchService.startFaceIndexing();
   }
 
   void _loadPersons() {
     final face = _faceService;
-    if (face == null || !face.isAvailable) {
+    if (face == null || face.status == FaceServiceStatus.unavailable ||
+        face.status == FaceServiceStatus.uninitialized) {
       setState(() {
         _persons = [];
         _isLoading = false;
@@ -45,7 +78,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
     }
 
     setState(() {
-      _persons = face.allPersons
+      _persons = List.of(face.allPersons)
         ..sort((a, b) => b.faceCount.compareTo(a.faceCount));
       _isLoading = false;
     });
@@ -104,7 +137,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
       appBar: AppBar(
         title: const Text('People'),
         actions: [
-          if (_faceService?.isAvailable == true)
+          if (_faceStatus == FaceServiceStatus.ready)
             IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'Refresh',
@@ -117,7 +150,10 @@ class _PeopleScreenState extends State<PeopleScreen> {
   }
 
   Widget _buildBody(bool isDark) {
-    if (_faceService == null || !_faceService!.isAvailable) {
+    // Models not present at all.
+    if (_faceService == null ||
+        _faceStatus == FaceServiceStatus.unavailable ||
+        _faceStatus == FaceServiceStatus.uninitialized) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -150,23 +186,113 @@ class _PeopleScreenState extends State<PeopleScreen> {
       );
     }
 
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_persons.isEmpty) {
+    // Models loaded, currently scanning gallery.
+    if (_faceStatus == FaceServiceStatus.indexing ||
+        _faceStatus == FaceServiceStatus.initializing) {
+      final state = _indexingState;
+      final hasProgress = state.totalImages > 0;
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.people_outline,
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              Text(
+                _faceStatus == FaceServiceStatus.initializing
+                    ? 'Loading face models…'
+                    : 'Scanning for faces…',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+              if (hasProgress) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${state.processedImages} / ${state.totalImages} images'
+                  '  ·  ${state.facesFound} faces found',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? Colors.white54 : Colors.black54,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                LinearProgressIndicator(value: state.progress),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_persons.isEmpty) {
+      // Indexing ran but found nothing.
+      if (_indexingRequested) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.people_outline,
+                    size: 64,
+                    color: isDark ? Colors.white38 : Colors.black38),
+                const SizedBox(height: 16),
+                Text(
+                  'No People Found',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white70 : Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'No faces were detected in your gallery.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: isDark ? Colors.white54 : Colors.black54),
+                ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: _startFaceIndexing,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Scan Again'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor:
+                        isDark ? Colors.white70 : Colors.black87,
+                    side: BorderSide(
+                        color: isDark
+                            ? Colors.white24
+                            : Colors.black26),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      // Indexing has never been run — show the prompt button.
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.face_outlined,
                   size: 64,
                   color: isDark ? Colors.white38 : Colors.black38),
               const SizedBox(height: 16),
               Text(
-                'No People Found',
+                'Find People',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
@@ -175,11 +301,16 @@ class _PeopleScreenState extends State<PeopleScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'No faces have been detected in your gallery yet.\n'
-                'Faces are automatically detected when images are indexed.',
+                'Scan your gallery to detect and group faces.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     color: isDark ? Colors.white54 : Colors.black54),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: _startFaceIndexing,
+                icon: const Icon(Icons.search),
+                label: const Text('Find Faces'),
               ),
             ],
           ),

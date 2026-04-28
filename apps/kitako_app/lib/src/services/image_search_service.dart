@@ -17,6 +17,7 @@ enum IndexingPhase {
   restoringCache,
   loadingGallery,
   embedding,
+  embeddingPartialFailure,
   savingCache,
   switchingVariant,
   ready,
@@ -37,12 +38,16 @@ class IndexingProgress {
   /// Error message when [phase] is [IndexingPhase.error].
   final String? error;
 
+  /// Number of images that failed to embed (for [IndexingPhase.embeddingPartialFailure]).
+  final int? failedCount;
+
   const IndexingProgress({
     required this.phase,
     required this.message,
     this.done,
     this.total,
     this.error,
+    this.failedCount,
   });
 
   /// Fractional progress 0.0–1.0 if known, else null.
@@ -116,6 +121,10 @@ class ImageSearchService {
   IndexingProgress _lastProgress =
       const IndexingProgress(phase: IndexingPhase.idle, message: '');
 
+  /// Resolves to true (retry) or false (skip) when the UI responds to a partial
+  /// embedding failure prompt.
+  Completer<bool>? _embeddingFailureCompleter;
+
   /// Current search state
   SearchState _currentState = const SearchState();
 
@@ -144,6 +153,7 @@ class ImageSearchService {
     int? done,
     int? total,
     String? error,
+    int? failedCount,
   }) {
     _lastProgress = IndexingProgress(
       phase: phase,
@@ -151,6 +161,7 @@ class ImageSearchService {
       done: done,
       total: total,
       error: error,
+      failedCount: failedCount,
     );
     if (!_progressController.isClosed) {
       _progressController.add(_lastProgress);
@@ -170,6 +181,50 @@ class ImageSearchService {
 
   /// Whether face recognition features are available.
   bool get isFaceSearchAvailable => _faceService?.isAvailable ?? false;
+
+  /// Run face detection + clustering over the loaded gallery.
+  ///
+  /// Call this once after [FaceService.tryAutoInitialize] returns true.
+  /// Images are loaded and processed in small batches so peak memory stays
+  /// bounded; the face pipeline is released between batches by the GC.
+  Future<void> startFaceIndexing() async {
+    final face = _faceService;
+    if (face == null || !face.isAvailable) return;
+
+    final images = getAllImages();
+    if (images.isEmpty) return;
+
+    debugPrint('ImageSearchService: Starting face indexing for ${images.length} images');
+
+    const batchSize = 10;
+    for (int i = 0; i < images.length; i += batchSize) {
+      final batch = images.sublist(i, (i + batchSize).clamp(0, images.length));
+      final entries = <MapEntry<String, Uint8List>>[];
+
+      for (final img in batch) {
+        try {
+          final bytes = await _imageLoader.loadImageBytes(img.id);
+          if (bytes != null) entries.add(MapEntry(img.id, bytes));
+        } catch (e) {
+          debugPrint('ImageSearchService: Face indexing — skipping ${img.id}: $e');
+        }
+      }
+
+      if (entries.isNotEmpty) {
+        await face.indexImageBatch(entries);
+      }
+
+      debugPrint(
+        'ImageSearchService: Face indexing ${(i + batchSize).clamp(0, images.length)}/${images.length}',
+      );
+    }
+
+    face.finalizeClustering();
+    debugPrint(
+      'ImageSearchService: Face indexing complete — '
+      '${face.faceCount} faces, ${face.personCount} persons',
+    );
+  }
 
   // ========== Algorithm Preference ==========
 
@@ -382,30 +437,14 @@ class ImageSearchService {
         await _embeddingService.switchToVariant(currentVariant);
       }
 
-      // Load device gallery (thumbnails) so search results can render.
+      // Load device gallery metadata so the grid can render lazily from disk.
       _emitProgress(IndexingPhase.loadingGallery, 'Loading device gallery…');
       final allImages = await _imageLoader.loadDeviceImages();
       if (allImages.isNotEmpty) {
-        final imagesWithThumbs = <ImageItem>[];
-        final total = allImages.take(1000).length;
-        var done = 0;
-        for (final image in allImages.take(1000)) {
-          try {
-            final withThumb = await _imageLoader.getImageWithThumbnail(image.id);
-            imagesWithThumbs.add(withThumb);
-          } catch (_) {
-            imagesWithThumbs.add(image);
-          }
-          done++;
-          if (done == 1 || done % 50 == 0 || done == total) {
-            _emitProgress(IndexingPhase.loadingGallery,
-                'Loading gallery ($done/$total)…',
-                done: done, total: total);
-          }
-        }
-        _loadedImages = imagesWithThumbs;
-        _imagesLoadedController.add(imagesWithThumbs);
-        debugPrint('ImageSearchService: Loaded ${imagesWithThumbs.length} images for gallery');
+        final gallery = allImages.take(1000).toList();
+        _loadedImages = gallery;
+        _imagesLoadedController.add(gallery);
+        debugPrint('ImageSearchService: Loaded ${gallery.length} images for gallery');
       }
 
       _isInitialized = true;
@@ -498,20 +537,9 @@ class ImageSearchService {
       final scoped = _filterByActiveDataset(raw).take(k).toList();
       final filtered = _applyComboFilter(scoped);
 
-      // Step 4: Load thumbnails for search results
-      debugPrint('ImageSearchService: Loading thumbnails for ${filtered.length} results...');
-      final imagesWithThumbnails = <ImageItem>[];
-      final scores = <double>[];
-      for (final result in filtered) {
-        try {
-          final imageWithThumb = await _imageLoader.getImageWithThumbnail(result.image.id);
-          imagesWithThumbnails.add(imageWithThumb);
-        } catch (e) {
-          debugPrint('ImageSearchService: Failed to load thumbnail for ${result.image.id}: $e');
-          imagesWithThumbnails.add(result.image);
-        }
-        scores.add(result.similarity);
-      }
+      // Step 4: Collect results (thumbnails are loaded lazily by the grid).
+      final imagesWithThumbnails = filtered.map((r) => r.image).toList();
+      final scores = filtered.map((r) => r.similarity).toList();
 
       stopwatch.stop();
       debugPrint(
@@ -597,15 +625,10 @@ class ImageSearchService {
     try {
       final imageIds = face.searchByPersonLabel(label);
 
-      final images = <ImageItem>[];
-      for (final id in imageIds) {
-        try {
-          images.add(await _imageLoader.getImageWithThumbnail(id));
-        } catch (_) {
-          final found = getImageById(id);
-          if (found != null) images.add(found);
-        }
-      }
+      final images = imageIds
+          .map((id) => getImageById(id))
+          .whereType<ImageItem>()
+          .toList();
 
       if (images.isEmpty) {
         _updateState(SearchState(
@@ -685,20 +708,9 @@ class ImageSearchService {
       final scoped = _filterByActiveDataset(raw).take(k).toList();
       final filtered = _applyComboFilter(scoped, isImageSearch: true);
 
-      // Step 4: Load thumbnails for search results
-      debugPrint('ImageSearchService: Loading thumbnails for ${filtered.length} results...');
-      final imagesWithThumbnails = <ImageItem>[];
-      final scores = <double>[];
-      for (final result in filtered) {
-        try {
-          final imageWithThumb = await _imageLoader.getImageWithThumbnail(result.image.id);
-          imagesWithThumbnails.add(imageWithThumb);
-        } catch (e) {
-          debugPrint('ImageSearchService: Failed to load thumbnail for ${result.image.id}: $e');
-          imagesWithThumbnails.add(result.image);
-        }
-        scores.add(result.similarity);
-      }
+      // Step 4: Collect results (thumbnails are loaded lazily by the grid).
+      final imagesWithThumbnails = filtered.map((r) => r.image).toList();
+      final scores = filtered.map((r) => r.similarity).toList();
 
       stopwatch.stop();
       debugPrint(
@@ -812,6 +824,15 @@ class ImageSearchService {
       'annIndex': _annSearch.getIndexStats(),
       'currentState': _currentState.status.toString(),
     };
+  }
+
+  // ========== Embedding failure response ==========
+
+  /// Called by the UI when the user responds to an [IndexingPhase.embeddingPartialFailure]
+  /// prompt. Pass [retry] = true to re-embed failed images, false to skip them
+  /// and continue to [IndexingPhase.ready] with what was already embedded.
+  void continueAfterEmbeddingFailure({required bool retry}) {
+    _embeddingFailureCompleter?.complete(retry);
   }
 
   // ========== Cleanup ==========
@@ -1007,35 +1028,52 @@ class ImageSearchService {
       // throughput. A 4032×3024 phone JPEG decodes to a ~48 MB RGBA buffer
       // inside compute() before the preprocessor resizes it; running that
       // in 10 isolates concurrently pushes ~500 MB of decode buffers on top
-      // of the ~625 MB SigLIP model and OOMs Android. 2 keeps a little I/O
-      // overlap without exceeding ~100 MB of live decode memory.
-      const batchSize = 2;
+      // of the ~625 MB SigLIP model and OOMs Android. 5 keeps reasonable I/O
+      // overlap; if an entire batch fails it is retried one-by-one before
+      // counting images as permanently failed.
+      const batchSize = 5;
 
-      for (var batchStart = 0; batchStart < newImages.length; batchStart += batchSize) {
+      final failedImages = <ImageItem>[];
+
+      Future<({ImageItem image, List<double> embedding, bool success})>
+          embedOne(ImageItem image) async {
+        try {
+          final decoded = await _imageLoader.loadResizedForEmbedding(image.id);
+          if (decoded != null) {
+            final embedding = await _embeddingService
+                .generateImageEmbeddingFromRgba(
+                    decoded.rgba, decoded.width, decoded.height);
+            return (image: image, embedding: embedding, success: true);
+          }
+        } catch (e) {
+          debugPrint('ImageSearchService: Failed to embed ${image.id}: $e');
+        }
+        return (image: image, embedding: <double>[], success: false);
+      }
+
+      for (var batchStart = 0;
+          batchStart < newImages.length;
+          batchStart += batchSize) {
         final batchEnd = (batchStart + batchSize).clamp(0, newImages.length);
         final batch = newImages.sublist(batchStart, batchEnd);
 
-        final futures = batch.map((image) async {
-          try {
-            final bytes = await _imageLoader.loadThumbnail(image.id);
-            if (bytes != null && bytes.isNotEmpty) {
-              final embedding = await _embeddingService.generateImageEmbedding(bytes);
-              return (image: image, embedding: embedding, success: true);
-            }
-          } catch (e) {
-            debugPrint('ImageSearchService: Failed to embed ${image.id}: $e');
-          }
-          return (image: image, embedding: <double>[], success: false);
-        }).toList();
+        final results =
+            await Future.wait(batch.map(embedOne));
 
-        final results = await Future.wait(futures);
+        // If the entire batch failed, retry each image individually to avoid
+        // contention being the root cause of all failures.
+        final allFailed = results.every((r) => !r.success);
+        final effective = allFailed && batch.length > 1
+            ? await Future.wait(batch.map(embedOne))
+            : results;
 
-        for (final result in results) {
+        for (final result in effective) {
           if (result.success) {
             newlyIndexed.add(result.image);
             newEmbeddings.add(result.embedding);
             successCount++;
           } else {
+            failedImages.add(result.image);
             failedCount++;
           }
         }
@@ -1049,9 +1087,10 @@ class ImageSearchService {
             : '?';
         final remaining = total - batchEnd;
         final etaSec = successCount > 0
-            ? (remaining * stopwatch.elapsedMilliseconds / successCount / 1000).toStringAsFixed(0)
+            ? (remaining * stopwatch.elapsedMilliseconds / successCount / 1000)
+                .toStringAsFixed(0)
             : '?';
-        final barWidth = 20;
+        const barWidth = 20;
         final filled = (batchEnd / total * barWidth).round();
         final empty = barWidth - filled;
         final bar = '${'█' * filled}${'░' * empty}';
@@ -1068,12 +1107,33 @@ class ImageSearchService {
         );
       }
 
-      // Sanity check
-      if (successCount == 0 && newImages.isNotEmpty) {
-        throw StateError(
-          'All ${newImages.length} new images failed to embed. '
-          'The model may not be loaded correctly.',
+      // If some images failed, pause and let the user decide whether to retry
+      // or skip. A retry re-embeds the failed images one-by-one.
+      if (failedCount > 0) {
+        _embeddingFailureCompleter = Completer<bool>();
+        _emitProgress(
+          IndexingPhase.embeddingPartialFailure,
+          '$failedCount image${failedCount == 1 ? '' : 's'} failed to embed',
+          failedCount: failedCount,
+          error: successCount == 0
+              ? 'No images could be embedded — model may not be loaded correctly.'
+              : null,
         );
+        final retry = await _embeddingFailureCompleter!.future;
+        _embeddingFailureCompleter = null;
+
+        if (retry) {
+          debugPrint('ImageSearchService: Retrying ${failedImages.length} failed images…');
+          for (final image in failedImages) {
+            final result = await embedOne(image);
+            if (result.success) {
+              newlyIndexed.add(result.image);
+              newEmbeddings.add(result.embedding);
+              successCount++;
+              failedCount--;
+            }
+          }
+        }
       }
 
       // Index the newly embedded images
@@ -1149,24 +1209,13 @@ class ImageSearchService {
     }
   }
 
-  /// Load thumbnails for the given images and notify listeners.
+  /// Notify listeners that the indexed image list is ready.
+  /// Thumbnails are loaded lazily by the grid from [ImageItem.path].
   Future<void> _loadThumbnailsAndNotify(List<ImageItem> images) async {
-    debugPrint('ImageSearchService: Loading thumbnails for ${images.length} images...');
-    final imagesWithThumbnails = <ImageItem>[];
-    for (final image in images) {
-      try {
-        final imageWithThumb = await _imageLoader.getImageWithThumbnail(image.id);
-        imagesWithThumbnails.add(imageWithThumb);
-      } catch (e) {
-        debugPrint('ImageSearchService: Failed to load thumbnail for ${image.id}: $e');
-        imagesWithThumbnails.add(image);
-      }
-    }
-
-    _loadedImages = imagesWithThumbnails;
-    _indexedCount = imagesWithThumbnails.length;
-    _imagesLoadedController.add(imagesWithThumbnails);
-    debugPrint('ImageSearchService: Gallery ready with ${imagesWithThumbnails.length} images');
+    _loadedImages = images;
+    _indexedCount = images.length;
+    _imagesLoadedController.add(images);
+    debugPrint('ImageSearchService: Gallery ready with ${images.length} images');
   }
 
   // ========== Model Management ==========

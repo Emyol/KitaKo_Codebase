@@ -107,7 +107,11 @@ class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
         .firstWhere((p) =>
             p.phase == IndexingPhase.ready ||
             p.phase == IndexingPhase.error)
-        .then((_) => _faceService.tryAutoInitialize())
+        .then((_) async {
+          // Load face models so they're ready when the user opens People.
+          // Indexing itself is user-initiated from the People screen.
+          await _faceService.tryAutoInitialize();
+        })
         .ignore();
   }
 

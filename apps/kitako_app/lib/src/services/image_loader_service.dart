@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -205,6 +206,39 @@ class ImageLoaderService {
       return await file.readAsBytes();
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to load thumbnail for $imageId: $e');
+      return null;
+    }
+  }
+
+  /// Loads an image pre-downscaled to at most 512×512 RGBA using the
+  /// platform JPEG decoder, avoiding the ~48 MB buffer cost of decoding
+  /// a full-resolution phone photo before the 224×224 model resize.
+  ///
+  /// Returns null if the file is missing or cannot be decoded.
+  Future<({Uint8List rgba, int width, int height})?> loadResizedForEmbedding(
+      String imageId) async {
+    final file = _testFileCache[imageId];
+    if (file == null) return null;
+    try {
+      final bytes = await file.readAsBytes();
+      // targetWidth/targetHeight hint lets the platform JPEG decoder use DCT
+      // scaling — it never allocates the full-res buffer at all.
+      final codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: 512,
+        targetHeight: 512,
+      );
+      final frame = await codec.getNextFrame();
+      final w = frame.image.width;
+      final h = frame.image.height;
+      final byteData =
+          await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      frame.image.dispose();
+      if (byteData == null) return null;
+      return (rgba: byteData.buffer.asUint8List(), width: w, height: h);
+    } catch (e) {
+      debugPrint(
+          'ImageLoaderService: Failed to load resized image for $imageId: $e');
       return null;
     }
   }

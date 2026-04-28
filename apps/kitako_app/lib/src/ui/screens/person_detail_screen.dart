@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -265,14 +266,12 @@ class _PersonDetailScreenState extends State<PersonDetailScreen> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: image.thumbnail != null
-            ? Image.memory(
-                image.thumbnail!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    _buildImagePlaceholder(image, isDark),
-              )
-            : _buildImagePlaceholder(image, isDark),
+        child: Image.file(
+          File(image.path),
+          fit: BoxFit.cover,
+          cacheWidth: 256,
+          errorBuilder: (_, _, _) => _buildImagePlaceholder(image, isDark),
+        ),
       ),
     );
   }

@@ -151,6 +151,11 @@ class OnnxEmbeddingService {
     throw UnsupportedError('Not supported on web');
   }
 
+  Future<Float32List> embedImageFromRgba(
+      Uint8List rgba, int width, int height) async {
+    throw UnsupportedError('Not supported on web');
+  }
+
   Float32List embedPreprocessedImage(Float32List preprocessedImage) {
     throw UnsupportedError('Not supported on web');
   }

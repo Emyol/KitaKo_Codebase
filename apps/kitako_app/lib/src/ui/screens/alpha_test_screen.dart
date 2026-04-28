@@ -1575,14 +1575,13 @@ class _ResultTile extends StatelessWidget {
         height: 52,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(4),
-          child: image.thumbnail != null
-              ? Image.memory(image.thumbnail!, fit: BoxFit.cover)
-              : Image.file(
-                  File(image.path),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      const Icon(Icons.broken_image, size: 28),
-                ),
+          child: Image.file(
+            File(image.path),
+            fit: BoxFit.cover,
+            cacheWidth: 256,
+            errorBuilder: (_, _, _) =>
+                const Icon(Icons.broken_image, size: 28),
+          ),
         ),
       ),
       title: Text(
@@ -1730,13 +1729,11 @@ class _FullImageViewer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imageWidget = image.thumbnail != null
-        ? Image.memory(image.thumbnail!, fit: BoxFit.contain)
-        : Image.file(
-            File(image.path),
-            fit: BoxFit.contain,
-            errorBuilder: (_, _, _) => const Icon(Icons.broken_image, size: 64),
-          );
+    final imageWidget = Image.file(
+      File(image.path),
+      fit: BoxFit.contain,
+      errorBuilder: (_, _, _) => const Icon(Icons.broken_image, size: 64),
+    );
 
     return Dialog(
       backgroundColor: Colors.black87,

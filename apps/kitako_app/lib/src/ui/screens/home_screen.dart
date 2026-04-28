@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
@@ -313,14 +314,13 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                  image.thumbnail != null
-                                      ? Image.memory(
-                                          image.thumbnail!,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, _, _) =>
-                                              _buildPlaceholder(image, isDark),
-                                        )
-                                      : _buildPlaceholder(image, isDark),
+                                  Image.file(
+                                    File(image.path),
+                                    fit: BoxFit.cover,
+                                    cacheWidth: 256,
+                                    errorBuilder: (_, _, _) =>
+                                        _buildPlaceholder(image, isDark),
+                                  ),
                                   // Rank badge
                                   Positioned(
                                     top: 4,
@@ -439,14 +439,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   : Colors.black.withValues(alpha: 0.1),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: image.thumbnail != null
-                    ? Image.memory(
-                        image.thumbnail!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            _buildPlaceholder(image, isDark),
-                      )
-                    : _buildPlaceholder(image, isDark),
+                child: Image.file(
+                  File(image.path),
+                  fit: BoxFit.cover,
+                  cacheWidth: 256,
+                  errorBuilder: (_, _, _) =>
+                      _buildPlaceholder(image, isDark),
+                ),
               ),
             ),
           );

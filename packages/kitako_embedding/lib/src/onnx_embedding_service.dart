@@ -66,6 +66,22 @@ class OnnxEmbeddingService {
     return _l2Normalize(embedding);
   }
 
+  /// Generates a normalized embedding from pre-decoded RGBA bytes.
+  ///
+  /// Prefer this over [embedImage] when the caller already holds decoded
+  /// pixels (e.g. from [dart:ui.instantiateImageCodec]), since it skips
+  /// the full-resolution JPEG decode step.
+  Future<Float32List> embedImageFromRgba(
+      Uint8List rgba, int width, int height) async {
+    if (!isImageEncoderReady) {
+      throw StateError('Image encoder not ready. Call initialize() first.');
+    }
+    final preprocessed =
+        await ImagePreprocessor.preprocessRgbaAsync(rgba, width, height);
+    final embedding = await _inference.embedImage(preprocessed);
+    return _l2Normalize(embedding);
+  }
+
   /// Generates a normalized embedding for a text query.
   Future<Float32List> embedText(String text) async {
     if (!isTextEncoderReady) {

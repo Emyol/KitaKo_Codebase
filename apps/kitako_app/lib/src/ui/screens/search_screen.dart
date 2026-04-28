@@ -859,29 +859,12 @@ class _SearchScreenState extends State<SearchScreen> {
 
   /// Build an image thumbnail widget
   Widget _buildImageThumbnail(ImageItem image, bool isDark) {
-    // Try to load thumbnail if available
-    if (image.thumbnail != null) {
-      return Image.memory(
-        image.thumbnail!,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) =>
-            _buildPlaceholder(image, isDark),
-      );
-    }
-
-    // Try to load from file path
-    final file = File(image.path);
-    if (file.existsSync()) {
-      return Image.file(
-        file,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) =>
-            _buildPlaceholder(image, isDark),
-      );
-    }
-
-    // Fallback to placeholder
-    return _buildPlaceholder(image, isDark);
+    return Image.file(
+      File(image.path),
+      fit: BoxFit.cover,
+      cacheWidth: 256,
+      errorBuilder: (_, _, _) => _buildPlaceholder(image, isDark),
+    );
   }
 
   /// Build placeholder for images that can't be loaded
@@ -1106,18 +1089,16 @@ class _TestImagePickerScreen extends StatelessWidget {
   }
 
   Widget _buildThumb(ImageItem image, bool isDark) {
-    if (image.thumbnail != null) {
-      return Image.memory(image.thumbnail!, fit: BoxFit.cover);
-    }
-    final file = File(image.path);
-    if (file.existsSync()) {
-      return Image.file(file, fit: BoxFit.cover);
-    }
-    return Container(
-      color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0),
-      child: Icon(
-        Icons.image_outlined,
-        color: isDark ? Colors.white30 : Colors.black26,
+    return Image.file(
+      File(image.path),
+      fit: BoxFit.cover,
+      cacheWidth: 256,
+      errorBuilder: (_, _, _) => Container(
+        color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0),
+        child: Icon(
+          Icons.image_outlined,
+          color: isDark ? Colors.white30 : Colors.black26,
+        ),
       ),
     );
   }

@@ -224,6 +224,60 @@ class _StartupScreenState extends State<StartupScreen>
       );
     }
 
+    if (_progress.phase == IndexingPhase.embeddingPartialFailure) {
+      final failed = _progress.failedCount ?? 0;
+      return Column(
+        children: [
+          const Icon(Icons.warning_amber_rounded,
+              color: Color(0xFFFFB74D), size: 32),
+          const SizedBox(height: 12),
+          Text(
+            _progress.message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFFFFB74D), fontSize: 14),
+          ),
+          if (_progress.error != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _progress.error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFF888888), fontSize: 11),
+            ),
+          ],
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () => widget.searchService
+                    .continueAfterEmbeddingFailure(retry: true),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: Text('Retry $failed'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4A90E2),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: () => widget.searchService
+                    .continueAfterEmbeddingFailure(retry: false),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF888888),
+                  side: const BorderSide(color: Color(0xFF444444)),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                ),
+                child: const Text('Skip'),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
     final fraction = _progress.fraction;
 
     return Column(
