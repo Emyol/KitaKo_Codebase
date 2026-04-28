@@ -1,17 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/services.dart';
 
-/// SigLIP text tokenizer using HuggingFace tokenizers format.
+/// GemmaTokenizer - BPE tokenizer compatible with HuggingFace GemmaTokenizerFast.
 ///
-/// This is a BPE (Byte-Pair Encoding) tokenizer compatible with the
-/// SigLIP text encoder model.
+/// This tokenizer is used for the SigLIP2 text encoder which uses a Gemma-style
+/// tokenizer with 256k vocabulary and byte fallback support.
 class SiglipTokenizer {
   late Map<String, int> _vocab;
   late Map<int, String> _reverseVocab;
   late List<List<String>> _merges;
   late Map<String, int> _mergeRanks;
 
-  // Special tokens
+  // Special tokens (GemmaTokenizer defaults)
   static const int padTokenId = 0;
   static const int eosTokenId = 1;
   static const int bosTokenId = 2;
@@ -22,15 +23,27 @@ class SiglipTokenizer {
   static const String bosToken = '<bos>';
   static const String unkToken = '<unk>';
 
-  // Configuration
+  // Configuration matching ONNX model expectations
   static const int maxLength = 64;
   bool addEosToken = true;
   bool addBosToken = false;
+
+  // Byte fallback support
+  bool _byteFallback = true;
+  late Map<int, String> _byteToToken;
 
   bool _isLoaded = false;
 
   /// Whether the tokenizer has been loaded
   bool get isLoaded => _isLoaded;
+
+  /// Loads the tokenizer from a Flutter asset (HuggingFace format).
+  ///
+  /// [assetPath] should be the asset path like 'assets/tokenizer/tokenizer.json'
+  Future<void> loadFromAsset(String assetPath) async {
+    final content = await rootBundle.loadString(assetPath);
+    await loadFromJson(content);
+  }
 
   /// Loads the tokenizer from a tokenizer.json file (HuggingFace format).
   Future<void> loadFromFile(String tokenizerJsonPath) async {
@@ -66,7 +79,22 @@ class SiglipTokenizer {
       }
     }
 
-    // Load merges - format is array of [token1, token2] pairs
+    // Check for byte_fallback setting
+    _byteFallback = model['byte_fallback'] as bool? ?? true;
+
+    // Build byte-to-token mapping for byte fallback
+    _byteToToken = {};
+    if (_byteFallback) {
+      // GemmaTokenizer uses <0xXX> format for byte tokens
+      for (int b = 0; b < 256; b++) {
+        final byteToken = '<0x${b.toRadixString(16).toUpperCase().padLeft(2, '0')}>';
+        if (_vocab.containsKey(byteToken)) {
+          _byteToToken[b] = byteToken;
+        }
+      }
+    }
+
+    // Load merges - format can be array of [token1, token2] pairs or space-separated strings
     final mergesData = model['merges'] as List<dynamic>;
     _merges = [];
     _mergeRanks = {};
@@ -77,11 +105,14 @@ class SiglipTokenizer {
         _merges.add(parts);
         _mergeRanks['${parts[0]} ${parts[1]}'] = i;
       } else if (merge is String) {
-        // Fallback for space-separated format
+        // Space-separated format
         final parts = merge.split(' ');
-        if (parts.length == 2) {
-          _merges.add(parts);
-          _mergeRanks[merge] = i;
+        if (parts.length >= 2) {
+          // Handle cases where tokens themselves contain spaces
+          final first = parts[0];
+          final rest = parts.sublist(1).join(' ');
+          _merges.add([first, rest]);
+          _mergeRanks['$first $rest'] = i;
         }
       }
     }
@@ -92,6 +123,7 @@ class SiglipTokenizer {
   /// Tokenizes text into token IDs.
   ///
   /// Returns a list of token IDs, padded/truncated to [maxLength].
+  /// Matches HuggingFace GemmaTokenizerFast behavior.
   List<int> encode(String text) {
     if (!_isLoaded) {
       throw StateError('Tokenizer not loaded. Call loadFromFile first.');
@@ -105,9 +137,13 @@ class SiglipTokenizer {
       tokens.add(eosTokenId);
     }
 
-    // Truncate if too long
+    // Truncate if too long (leave room for EOS if needed)
     if (tokens.length > maxLength) {
       tokens = tokens.sublist(0, maxLength);
+      // Ensure EOS is at the end if addEosToken is true
+      if (addEosToken) {
+        tokens[maxLength - 1] = eosTokenId;
+      }
     }
 
     // Pad to maxLength
@@ -133,6 +169,12 @@ class SiglipTokenizer {
     return tokens;
   }
 
+  /// Generates attention mask for the given tokens.
+  /// 1 for real tokens, 0 for padding.
+  List<int> getAttentionMask(List<int> tokens) {
+    return tokens.map((t) => t == padTokenId ? 0 : 1).toList();
+  }
+
   /// Decodes token IDs back to text.
   String decode(List<int> tokenIds) {
     if (!_isLoaded) {
@@ -150,20 +192,21 @@ class SiglipTokenizer {
       }
     }
 
-    // Join and clean up (SentencePiece uses ▁ for word boundaries)
+    // Join and clean up (GemmaTokenizer uses ▁ for word boundaries)
     return tokens.join('').replaceAll('▁', ' ').trim();
   }
 
-  /// Internal tokenization using BPE.
+  /// Internal tokenization using BPE with GemmaTokenizer-style preprocessing.
   List<int> _tokenize(String text) {
-    // Normalize text (basic)
-    text = text.toLowerCase().trim();
+    // GemmaTokenizer normalizer: replace space with ▁ (U+2581)
+    // IMPORTANT: Do NOT add ▁ at the beginning - only replace internal spaces
+    // This matches HuggingFace GemmaTokenizerFast behavior:
+    // - "red" → "red" (no ▁, first word)
+    // - "a photo" → "a▁photo" (▁ only where space was)
+    String normalized = text.replaceAll(' ', '▁');
 
-    // For SentencePiece-style tokenizers, add word boundary marker
-    text = '▁${text.replaceAll(' ', '▁')}';
-
-    // Convert to initial character tokens
-    List<String> tokens = text.split('').toList();
+    // Convert to initial tokens (characters or byte fallback)
+    List<String> tokens = _initializeTokens(normalized);
 
     // Apply BPE merges
     tokens = _applyBpe(tokens);
@@ -174,9 +217,42 @@ class SiglipTokenizer {
     }).toList();
   }
 
+  /// Initialize tokens from text, using byte fallback for unknown characters.
+  List<String> _initializeTokens(String text) {
+    final tokens = <String>[];
+
+    for (int i = 0; i < text.length; i++) {
+      final char = text[i];
+
+      // Check if the character exists in vocab
+      if (_vocab.containsKey(char)) {
+        tokens.add(char);
+      } else if (_byteFallback) {
+        // Use byte fallback - encode character as UTF-8 bytes
+        final bytes = utf8.encode(char);
+        for (final byte in bytes) {
+          final byteToken = _byteToToken[byte];
+          if (byteToken != null) {
+            tokens.add(byteToken);
+          } else {
+            // Fallback to unknown token if byte token not found
+            tokens.add(unkToken);
+          }
+        }
+      } else {
+        // No byte fallback, use unknown token
+        tokens.add(unkToken);
+      }
+    }
+
+    return tokens;
+  }
+
   /// Applies BPE merges to a list of tokens.
   List<String> _applyBpe(List<String> tokens) {
-    while (tokens.length >= 2) {
+    if (tokens.length < 2) return tokens;
+
+    while (true) {
       // Find the best merge (lowest rank)
       int? bestIdx;
       int? bestRank;

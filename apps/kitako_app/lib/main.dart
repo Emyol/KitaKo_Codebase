@@ -1,50 +1,162 @@
+import 'dart:async';
+import 'dart:ui';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'src/services/crash_logger.dart';
 import 'src/ui/screens/startup_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
+import 'src/services/face_service.dart';
 import 'src/services/image_search_service.dart';
+import 'src/services/model_download_service.dart';
+import 'src/state/settings_controller.dart';
+import 'src/widgets/model_download_gate.dart';
 
 /// KitaKo - Image Retrieval Mobile Application
 /// Platform: Android & iOS
 /// Orientation: Portrait only
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+  // runZonedGuarded catches uncaught async errors that escape Flutter's
+  // own error handling (e.g. errors from completers, timers, or isolates
+  // that aren't awaited). Combined with the FlutterError + PlatformDispatcher
+  // hooks installed below, this gives us three nets to catch crashes
+  // before they take down the app.
+  runZonedGuarded<Future<void>>(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock app to portrait orientation for mobile
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+    // Initialize the on-disk crash log first so subsequent failures
+    // during boot are captured.
+    await CrashLogger.instance.init();
 
-  runApp(const KitaKoApp());
+    // 1) Framework errors (build/render/layout/gestures).
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      CrashLogger.instance.log(
+        'flutter',
+        details.exception,
+        details.stack,
+        message: details.context?.toString(),
+      );
+    };
+
+    // 2) Async errors that escape the Flutter framework (platform channels,
+    // engine callbacks). Returning true marks the error as handled so the
+    // engine doesn't terminate the isolate.
+    PlatformDispatcher.instance.onError = (error, stack) {
+      CrashLogger.instance.log('platform', error, stack);
+      return true;
+    };
+
+    // Lock app to portrait orientation for mobile
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+
+    // Restore saved preferences (defaults on first launch).
+    final themeNotifier = await ThemeNotifier.load();
+    final settingsController = await SettingsController.load();
+
+    // Print model diagnostics at startup (await so it shows before app loads)
+    await ModelDownloadService().printModelSetupInstructions();
+
+    runApp(KitaKoApp(
+      themeNotifier: themeNotifier,
+      settingsController: settingsController,
+    ));
+  }, (error, stack) {
+    // 3) Last-resort net for anything the other two didn't catch.
+    CrashLogger.instance.log('zone', error, stack);
+  });
 }
 
 class KitaKoApp extends StatefulWidget {
-  const KitaKoApp({super.key});
+  final ThemeNotifier themeNotifier;
+  final SettingsController settingsController;
+
+  const KitaKoApp({
+    super.key,
+    required this.themeNotifier,
+    required this.settingsController,
+  });
 
   @override
   State<KitaKoApp> createState() => _KitaKoAppState();
 }
 
-class _KitaKoAppState extends State<KitaKoApp> {
-  final ThemeNotifier _themeNotifier = ThemeNotifier();
-  final ImageSearchService _searchService = ImageSearchService();
+class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
+  late final ThemeNotifier _themeNotifier = widget.themeNotifier;
+  late final SettingsController _settingsController = widget.settingsController;
+
+  /// Face service — optional, gracefully disabled if models not present.
+  final FaceService _faceService = FaceService();
+  late final ImageSearchService _searchService;
 
   @override
   void initState() {
     super.initState();
-    _initializeService();
-  }
-
-  Future<void> _initializeService() async {
-    await _searchService.initialize();
+    WidgetsBinding.instance.addObserver(this);
+    _searchService = ImageSearchService(faceService: _faceService);
+    // Defer face init until the search service finishes its embedding pass.
+    // Loading face ONNX sessions concurrently with the SigLIP embedding loop
+    // (each image decode ~48 MB + the model itself ~625 MB) causes OOM.
+    // We listen for the first terminal phase (ready or error) and only then
+    // start the face pipeline, when the heavy buffers have been released.
+    _searchService.indexingProgressStream
+        .firstWhere((p) =>
+            p.phase == IndexingPhase.ready ||
+            p.phase == IndexingPhase.error)
+        .then((_) => _faceService.tryAutoInitialize())
+        .ignore();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _themeNotifier.dispose();
+    _settingsController.dispose();
+    _faceService.dispose();
     _searchService.dispose();
     super.dispose();
+  }
+
+  /// Android dispatches this when the OS is under memory pressure and is
+  /// about to start killing background processes. Free non-essential
+  /// in-memory buffers before we get killed.
+  @override
+  void didHaveMemoryPressure() {
+    super.didHaveMemoryPressure();
+    debugPrint('KitaKoApp: memory pressure — releasing transient buffers');
+    CrashLogger.instance.log(
+      'lifecycle',
+      'didHaveMemoryPressure',
+      null,
+      message: 'releasing transient buffers',
+    );
+    try {
+      _searchService.releaseTransientMemory();
+    } catch (e, s) {
+      CrashLogger.instance.log('lifecycle', e, s,
+          message: 'releaseTransientMemory failed');
+    }
+  }
+
+  /// Track app foreground/background transitions. We do NOT release the
+  /// ONNX session on `paused` — releasing OrtEnv prevents subsequent
+  /// model loading and the session itself is mmap-backed so it costs
+  /// little to keep. We only release transient caches when Android
+  /// signals real memory pressure (via [didHaveMemoryPressure]).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    debugPrint('KitaKoApp: lifecycle → ${state.name}');
+    if (state == AppLifecycleState.detached) {
+      // OS is shutting us down. Flush whatever we can.
+      try {
+        _searchService.releaseTransientMemory();
+      } catch (_) {}
+    }
   }
 
   @override
@@ -62,8 +174,8 @@ class _KitaKoAppState extends State<KitaKoApp> {
             brightness: Brightness.dark,
             scaffoldBackgroundColor: const Color(0xFF1A1A1A),
             colorScheme: const ColorScheme.dark(
-              primary: Color(0xFF4A90E2),
-              secondary: Color(0xFF5BA3F5),
+              primary: Color(0xFFFFD54F),
+              secondary: Color(0xFFFFE082),
               surface: Color(0xFF2A2A2A),
               background: Color(0xFF1A1A1A),
             ),
@@ -71,8 +183,9 @@ class _KitaKoAppState extends State<KitaKoApp> {
               backgroundColor: Color(0xFF1A1A1A),
               elevation: 0,
               centerTitle: false,
+              iconTheme: IconThemeData(color: Color(0xFFFFD54F)),
               titleTextStyle: TextStyle(
-                color: Color(0xFF1E3A5F),
+                color: Color(0xFFFFD54F),
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
@@ -125,10 +238,12 @@ class _KitaKoAppState extends State<KitaKoApp> {
               ),
             ),
           ),
-          home: Builder(
-            builder: (context) => StartupScreen(
+          home: ModelDownloadGate(
+            autoDownload: true, // Auto-download on first launch
+            child: StartupScreen(
               themeNotifier: _themeNotifier,
               searchService: _searchService,
+              settingsController: _settingsController,
             ),
           ),
         );

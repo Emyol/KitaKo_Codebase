@@ -15,8 +15,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     defaultConfig {
@@ -41,4 +43,63 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// ---------------------------------------------------------------------------
+// Auto-push ONNX models to connected Android device during development.
+//
+// Looks for model files in <workspace>/models/kitako/ and pushes any that
+// are missing from /data/local/tmp/ on the device. The app's
+// copyModelsFromTmp() copies them to its private directory on first launch.
+// ---------------------------------------------------------------------------
+tasks.register("pushOnnxModels") {
+    description = "Push ONNX model files to the connected Android device"
+    group = "kitako"
+
+    doLast {
+        val modelsDir = file("../../../../models/kitako")
+        if (!modelsDir.exists()) {
+            logger.warn("pushOnnxModels: models/kitako/ not found at ${modelsDir.absolutePath}")
+            return@doLast
+        }
+
+        val modelFiles = modelsDir.listFiles()?.filter { it.extension == "onnx" } ?: emptyList()
+        if (modelFiles.isEmpty()) {
+            logger.warn("pushOnnxModels: No .onnx files found in ${modelsDir.absolutePath}")
+            return@doLast
+        }
+
+        val adb = android.adbExecutable.absolutePath
+
+        for (modelFile in modelFiles) {
+            val remotePath = "/data/local/tmp/${modelFile.name}"
+
+            // Check if file already exists on device
+            val checkProcess = ProcessBuilder(adb, "shell", "ls", remotePath)
+                .redirectErrorStream(true)
+                .start()
+            checkProcess.inputStream.readBytes()
+            val exitCode = checkProcess.waitFor()
+
+            if (exitCode == 0) {
+                logger.lifecycle("pushOnnxModels: ${modelFile.name} already on device, skipping")
+                continue
+            }
+
+            logger.lifecycle("pushOnnxModels: Pushing ${modelFile.name} (${modelFile.length() / 1024 / 1024} MB)...")
+            val pushProcess = ProcessBuilder(adb, "push", modelFile.absolutePath, remotePath)
+                .inheritIO()
+                .start()
+            pushProcess.waitFor()
+        }
+
+        logger.lifecycle("pushOnnxModels: Done.")
+    }
+}
+
+// Hook into the install task so models are pushed automatically on `flutter run`
+tasks.configureEach {
+    if (name.startsWith("install")) {
+        finalizedBy("pushOnnxModels")
+    }
 }

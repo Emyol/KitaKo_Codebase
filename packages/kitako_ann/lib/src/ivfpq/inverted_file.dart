@@ -78,9 +78,6 @@ class InvertedFile {
         'Need at least $numClusters training samples, got ${data.length}',
       );
     }
-    if (!pq.isTrained) {
-      throw ArgumentError('ProductQuantizer must be trained first');
-    }
     if (pq.dimension != dimension) {
       throw ArgumentError(
         'PQ dimension ${pq.dimension} != IVF dimension $dimension',
@@ -88,7 +85,7 @@ class InvertedFile {
     }
 
     _pq = pq;
-    
+
     // Train coarse quantizer
     _coarseQuantizer = KMeans(
       numClusters: numClusters,
@@ -96,6 +93,16 @@ class InvertedFile {
       seed: seed,
     );
     _coarseQuantizer!.train(data);
+
+    // Train PQ on residuals (vector - cluster_centroid), NOT on raw vectors.
+    // The PQ encodes and decodes residuals at search time, so its codebooks
+    // must match the residual distribution (zero-centered, small norm).
+    // Training on raw vectors causes a distribution mismatch → inflated distances.
+    final residuals = data.map((v) {
+      final clusterId = _coarseQuantizer!.predict(v);
+      return _computeResidual(v, clusterId);
+    }).toList();
+    _pq!.train(residuals, maxIterations: maxIterations, seed: seed);
   }
 
   /// Adds a vector to the index

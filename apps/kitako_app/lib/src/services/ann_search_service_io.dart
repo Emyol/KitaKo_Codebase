@@ -9,21 +9,35 @@ class AnnPlatformHelper {
   static bool get isSupported => true;
 
   /// Copy asset to local file system (required for native FFI)
-  static Future<String> copyAssetToFile(String assetPath, String fileName) async {
+  /// Returns null if the asset is empty or doesn't exist
+  static Future<String?> copyAssetToFile(String assetPath, String fileName) async {
     final directory = await getApplicationDocumentsDirectory();
     final filePath = '${directory.path}/$fileName';
     final file = File(filePath);
 
-    // Check if file already exists
+    // Check if file already exists and is non-empty
     if (await file.exists()) {
-      return filePath;
+      final size = await file.length();
+      if (size > 0) {
+        return filePath;
+      }
+      // Delete empty file to allow re-copy
+      await file.delete();
     }
 
     // Copy from assets
-    final data = await rootBundle.load(assetPath);
-    await file.writeAsBytes(data.buffer.asUint8List());
-
-    return filePath;
+    try {
+      final data = await rootBundle.load(assetPath);
+      // Skip if the asset is empty
+      if (data.lengthInBytes == 0) {
+        return null;
+      }
+      await file.writeAsBytes(data.buffer.asUint8List());
+      return filePath;
+    } catch (e) {
+      // Asset doesn't exist or can't be loaded
+      return null;
+    }
   }
 
   /// Create the native ANN client

@@ -88,21 +88,17 @@ class IvfPqAnnIndex extends AnnIndex with AnnIndexValidation {
       }
     }
 
-    // Initialize Product Quantizer
+    // Initialize Product Quantizer (untrained — InvertedFile.train() will
+    // train it on residuals after fitting the coarse quantizer).
     _pq = ProductQuantizer(
       dimension: dimension,
       numSubquantizers: _config.numSubquantizers,
       numCentroids: _config.numCentroidsPerSubquantizer,
     );
 
-    // Train PQ on the data
-    _pq!.train(
-      data,
-      maxIterations: _config.trainingIterations,
-      seed: seed,
-    );
-
-    // Initialize and train Inverted File
+    // Initialize and train Inverted File.
+    // This also trains the PQ on residuals (vector − cluster_centroid),
+    // ensuring the codebooks match the actual residual distribution.
     _ivf = InvertedFile(
       numClusters: _config.numClusters,
       dimension: dimension,

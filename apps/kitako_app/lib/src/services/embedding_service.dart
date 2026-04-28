@@ -3,27 +3,42 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:kitako_normalizer/kitako_normalizer.dart';
 
-// Conditional import - don't import tflite on web
+// Conditional import - don't import native packages on web
 import 'embedding_service_stub.dart'
     if (dart.library.io) 'package:kitako_embedding/kitako_embedding.dart';
+// Re-export types so consumers get them from the same conditional source
+export 'embedding_service_stub.dart'
+    if (dart.library.io) 'package:kitako_embedding/kitako_embedding.dart'
+    show SiglipModelVersion, SiglipModelConfig, ModelVariant;
+
+import 'model_download_service.dart';
+
+/// Backend type for embedding generation
+enum EmbeddingBackend {
+  /// ONNX Runtime backend
+  onnx,
+
+  /// No model loaded
+  mock,
+}
 
 /// Service for generating text and image embeddings
 ///
 /// This service wraps the kitako_embedding package and provides:
 /// - Text normalization (Taglish support)
-/// - Text embedding generation via SigLIP
-/// - Image embedding generation via SigLIP
+/// - Text embedding generation via SigLIP-2 / Kitako ONNX models
+/// - Image embedding generation via SigLIP-2 / Kitako ONNX models
 /// - Caching for repeated queries
-///
-/// Example usage:
-/// ```dart
-/// final embeddingService = EmbeddingService();
-/// await embeddingService.initialize();
-/// final embedding = await embeddingService.generateEmbedding('search query');
-/// ```
+/// - Model variant switching (Kitako INT8, SigLIP-2 Baseline)
 class EmbeddingService {
-  /// The underlying KitaKo embedding service
-  KitakoEmbeddingService? _embeddingClient;
+  /// The ONNX embedding service
+  OnnxEmbeddingService? _onnxClient;
+
+  /// Model download service for ONNX models
+  final ModelDownloadService _downloadService = ModelDownloadService();
+
+  /// Current active backend
+  EmbeddingBackend _activeBackend = EmbeddingBackend.mock;
 
   /// Whether the service has been initialized
   bool _isInitialized = false;
@@ -40,137 +55,265 @@ class EmbeddingService {
   /// Embedding dimension (SigLIP)
   static const int embeddingDimension = 768;
 
-  /// Asset paths for models
-  static const String _imageModelAsset = 'assets/model/image_encoder/kitako_image_encoder_int8.tflite';
-  static const String _textModelAsset = 'assets/model/text_encoder/kitako_text_encoder_dynamic.tflite';
-  static const String _tokenizerAsset = 'assets/tokenizer/tokenizer.json';
+  // Tokenizer path is resolved at runtime via _downloadService.getTokenizerPath().
+
+  /// Current active model variant
+  ModelVariant? _activeVariant;
 
   /// Whether the service is initialized
   bool get isInitialized => _isInitialized;
 
-  /// Whether text embedding is available
-  bool get isTextReady => _embeddingClient?.isTextEncoderReady ?? false;
+  /// Current backend in use
+  EmbeddingBackend get activeBackend => _activeBackend;
 
-  /// Whether image embedding is available
-  bool get isImageReady => _embeddingClient?.isImageEncoderReady ?? false;
+  /// Current SigLIP model version (always siglip2 now)
+  SiglipModelVersion get modelVersion => SiglipModelVersion.siglip2;
+
+  /// Current active model variant
+  ModelVariant? get activeVariant => _activeVariant;
+
+  /// Current model configuration
+  SiglipModelConfig? get modelConfig => _onnxClient?.modelConfig;
+
+  /// Active execution provider for each encoder ('nnapi', 'coreml', 'xnnpack', 'cpu').
+  /// Returns 'cpu' when no ONNX client is active.
+  String get imageEp => _onnxClient?.imageEp ?? 'cpu';
+  String get textEp => _onnxClient?.textEp ?? 'cpu';
+
+  /// Whether text embedding is available (requires a real model)
+  bool get isTextReady {
+    if (_activeBackend == EmbeddingBackend.onnx) {
+      return _onnxClient?.isTextEncoderReady ?? false;
+    }
+    return false;
+  }
+
+  /// Whether image embedding is available (requires a real model)
+  bool get isImageReady {
+    if (_activeBackend == EmbeddingBackend.onnx) {
+      return _onnxClient?.isImageEncoderReady ?? false;
+    }
+    return false;
+  }
 
   /// Initialize the embedding service
   ///
-  /// Loads the TFLite models and tokenizer from assets.
-  /// Must be called before generating embeddings.
+  /// Tries to load models in order:
+  /// 1. Kitako INT8 (best for mobile - fast, small footprint)
+  /// 2. SigLIP-2 Baseline (external/downloaded)
   ///
-  /// Returns `true` if initialization was successful
+  /// On Android, copies models from /data/local/tmp/ if pushed via ADB.
+  ///
+  /// Returns `true` if a real model was loaded successfully
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
+    debugPrint('EmbeddingService: Starting initialization...');
+
+    // On Android, try to copy models from ADB push location first
     try {
-      debugPrint('EmbeddingService: Initializing with real TFLite models...');
+      await _downloadService.copyModelsFromTmp();
+    } catch (e) {
+      debugPrint('EmbeddingService: copyModelsFromTmp: $e');
+    }
 
-      _embeddingClient = KitakoEmbeddingService();
-
-      // Initialize with asset paths
-      await _embeddingClient!.initialize(
-        imageModelPath: _imageModelAsset,
-        textModelPath: _textModelAsset,
-        tokenizerPath: _tokenizerAsset,
-      );
-
-      _isInitialized = true;
-      debugPrint('EmbeddingService: Initialized successfully');
-      debugPrint('  - Text encoder ready: ${_embeddingClient!.isTextEncoderReady}');
-      debugPrint('  - Image encoder ready: ${_embeddingClient!.isImageEncoderReady}');
-      return true;
-    } catch (e, stack) {
-      debugPrint('EmbeddingService: Failed to initialize TFLite: $e');
-      debugPrint('Stack trace: $stack');
-      
-      // Fall back to mock mode
-      _embeddingClient = null;
-      _isInitialized = true; // Still mark as initialized for mock fallback
-      debugPrint('EmbeddingService: Running in MOCK mode');
+    // Try Kitako FP32 (FP32 vision + FP32 text) — highest quality, dev-only
+    debugPrint('EmbeddingService: Checking for Kitako FP32 (FP32 vision + FP32 text)...');
+    if (await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_fp32', ModelVariant.kitakoFp32)) {
       return true;
     }
+
+    // Try Kitako Mixed (FP32 vision + INT8 text) — primary config
+    debugPrint('EmbeddingService: Checking for Kitako Mixed (FP32 vision + INT8 text)...');
+    if (await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_int8', ModelVariant.kitakoMixed)) {
+      return true;
+    }
+
+    // Try all-INT8 as fallback
+    debugPrint('EmbeddingService: Checking for Kitako INT8 (all-quantized fallback)...');
+    if (await _tryInitializeModel('kitako_vision_int8', 'kitako_text_int8', ModelVariant.kitakoInt8)) {
+      return true;
+    }
+
+    // Try SigLIP-2 Baseline from downloaded/external models
+    debugPrint('EmbeddingService: Checking for SigLIP-2 Baseline...');
+    if (await _tryInitializeModel('siglip2_vision', 'siglip2_text', ModelVariant.siglip2Baseline)) {
+      return true;
+    }
+
+    // No real model found
+    _activeBackend = EmbeddingBackend.mock;
+    _isInitialized = false;
+    debugPrint('EmbeddingService: ✗ No ONNX model found.');
+    debugPrint('EmbeddingService: For Android, push models via ADB:');
+    debugPrint('  adb push models/kitako/kitako_image_encoder_int8.onnx /data/local/tmp/');
+    debugPrint('  adb push models/kitako/kitako_text_encoder_int8.onnx /data/local/tmp/');
+    debugPrint('EmbeddingService: For desktop, place models in models/kitako/ in workspace root.');
+    return false;
+  }
+
+  /// Try to initialize with a specific model pair.
+  ///
+  /// Checks availability, resolves paths, loads ONNX sessions + tokenizer.
+  /// Returns `true` on success.
+  Future<bool> _tryInitializeModel(
+    String visionKey,
+    String textKey,
+    ModelVariant variant,
+  ) async {
+    try {
+      final visionReady = await _downloadService.isModelAvailable(visionKey);
+      final textReady = await _downloadService.isModelAvailable(textKey);
+
+      if (!visionReady || !textReady) {
+        debugPrint('EmbeddingService: ${variant.displayName} not available (vision: $visionReady, text: $textReady)');
+        return false;
+      }
+
+      final visionPath = await _downloadService.getModelPath(visionKey);
+      final textPath = await _downloadService.getModelPath(textKey);
+      final tokenizerPath = await _downloadService.getTokenizerPath();
+
+      debugPrint('EmbeddingService: Loading ${variant.displayName} from:');
+      debugPrint('  Vision: $visionPath');
+      debugPrint('  Text: $textPath');
+      debugPrint('  Tokenizer: $tokenizerPath');
+
+      _onnxClient = OnnxEmbeddingService();
+      await _onnxClient!.initialize(
+        visionModelPath: visionPath,
+        textModelPath: textPath,
+        tokenizerPath: tokenizerPath,
+        modelVersion: SiglipModelVersion.siglip2,
+      );
+
+      _activeBackend = EmbeddingBackend.onnx;
+      _activeVariant = variant;
+      _isInitialized = true;
+      _embeddingCache.clear();
+
+      debugPrint('EmbeddingService: ${variant.displayName} initialized successfully');
+      debugPrint('  - Vision encoder ready: ${_onnxClient!.isImageEncoderReady}');
+      debugPrint('  - Text encoder ready: ${_onnxClient!.isTextEncoderReady}');
+      debugPrint('  - Model config: ${_onnxClient!.modelConfig}');
+
+      return true;
+    } catch (e, stack) {
+      debugPrint('╔══ EmbeddingService INIT ERROR ══╗');
+      debugPrint('║ Model: ${variant.displayName}');
+      debugPrint('║ Error: $e');
+      debugPrint('║ Stack: $stack');
+      debugPrint('╚════════════════════════════════╝');
+      _onnxClient?.dispose();
+      _onnxClient = null;
+      return false;
+    }
+  }
+
+  /// Whether both model files required for [variant] exist on disk.
+  ///
+  /// This does not attempt to open them — use [switchToVariant] for that.
+  Future<bool> isVariantAvailable(ModelVariant variant) async {
+    final visionReady = await _downloadService.isModelAvailable(variant.visionEncoderId);
+    final textReady = await _downloadService.isModelAvailable(variant.textEncoderId);
+    return visionReady && textReady;
+  }
+
+  /// Switch to a specific model variant
+  ///
+  /// [variant] - The model variant to use (from ModelVariant enum)
+  ///
+  /// Returns `true` if the switch was successful
+  Future<bool> switchToVariant(ModelVariant variant) async {
+    if (_activeVariant == variant && _isInitialized) {
+      debugPrint('EmbeddingService: Already using ${variant.displayName}');
+      return true;
+    }
+
+    debugPrint('EmbeddingService: Switching to ${variant.displayName}...');
+
+    // Dispose current client and reset all state
+    _onnxClient?.dispose();
+    _onnxClient = null;
+    _isInitialized = false;
+    _activeBackend = EmbeddingBackend.mock;
+    _activeVariant = null;
+    _embeddingCache.clear();
+
+    bool success = false;
+    switch (variant) {
+      case ModelVariant.kitakoFp32:
+        success = await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_fp32', variant);
+        break;
+      case ModelVariant.kitakoMixed:
+        success = await _tryInitializeModel('kitako_vision_fp32', 'kitako_text_int8', variant);
+        break;
+      case ModelVariant.kitakoInt8:
+        success = await _tryInitializeModel('kitako_vision_int8', 'kitako_text_int8', variant);
+        break;
+      case ModelVariant.siglip2Baseline:
+        success = await _tryInitializeModel('siglip2_vision', 'siglip2_text', variant);
+        break;
+    }
+
+    if (!success) {
+      _activeBackend = EmbeddingBackend.mock;
+      _activeVariant = null;
+      _isInitialized = false;
+      debugPrint('EmbeddingService: Failed to switch to ${variant.displayName}');
+    }
+
+    return success;
   }
 
   /// Generate embedding for a text query
   ///
   /// Normalizes the query and converts it to a dense vector.
   /// Results are cached to improve performance.
-  ///
-  /// Parameters:
-  /// - [query]: The text to embed
-  ///
-  /// Returns a list of doubles representing the embedding vector
   Future<List<double>> generateEmbedding(String query) async {
-    if (!_isInitialized) {
+    if (!_isInitialized || _activeBackend != EmbeddingBackend.onnx) {
       throw StateError(
-        'EmbeddingService not initialized. Call initialize() first.',
+        'EmbeddingService not initialized. No ONNX model is loaded.',
       );
     }
 
-    // Normalize query
+    // Normalize query (text-speak cleanup)
     final normalizedQuery = _normalizeQuery(query);
 
     // Check cache
     if (_embeddingCache.containsKey(normalizedQuery)) {
-      debugPrint('EmbeddingService: Cache hit for query: "$normalizedQuery"');
       return _embeddingCache[normalizedQuery]!;
     }
 
-    try {
-      List<double> embedding;
-
-      if (_embeddingClient != null && _embeddingClient!.isTextEncoderReady) {
-        // Use real embedding model
-        final float32Embedding = _embeddingClient!.embedText(normalizedQuery);
-        embedding = float32Embedding.toList();
-        debugPrint('EmbeddingService: Generated real embedding for: "$normalizedQuery"');
-      } else {
-        // Fall back to mock embedding
-        embedding = _generateMockEmbedding(normalizedQuery);
-        debugPrint('EmbeddingService: Generated MOCK embedding for: "$normalizedQuery"');
-      }
-
-      // Cache the result
-      _cacheEmbedding(normalizedQuery, embedding);
-
-      return embedding;
-    } catch (e) {
-      debugPrint('EmbeddingService: Failed to generate embedding: $e');
-      // Fall back to mock on error
-      final mockEmbedding = _generateMockEmbedding(normalizedQuery);
-      _cacheEmbedding(normalizedQuery, mockEmbedding);
-      return mockEmbedding;
+    if (_onnxClient == null || !_onnxClient!.isTextEncoderReady) {
+      throw StateError('ONNX text encoder not ready.');
     }
+
+    final float32Embedding = await _onnxClient!.embedText(normalizedQuery);
+    final embedding = float32Embedding.toList();
+
+    _cacheEmbedding(normalizedQuery, embedding);
+
+    return embedding;
   }
 
   /// Generate embedding for an image
   ///
-  /// Parameters:
-  /// - [imageBytes]: Raw image bytes (JPEG, PNG, etc.)
-  ///
-  /// Returns a normalized 768-dimensional embedding vector
+  /// Returns a normalized 768-dimensional embedding vector.
+  /// Throws [StateError] if the image encoder is not ready.
   Future<List<double>> generateImageEmbedding(Uint8List imageBytes) async {
-    if (!_isInitialized) {
+    if (!_isInitialized || _activeBackend != EmbeddingBackend.onnx) {
       throw StateError(
-        'EmbeddingService not initialized. Call initialize() first.',
+        'EmbeddingService not initialized. No ONNX model is loaded.',
       );
     }
 
-    try {
-      if (_embeddingClient != null && _embeddingClient!.isImageEncoderReady) {
-        final float32Embedding = _embeddingClient!.embedImage(imageBytes);
-        debugPrint('EmbeddingService: Generated real image embedding');
-        return float32Embedding.toList();
-      } else {
-        // Fall back to mock embedding
-        debugPrint('EmbeddingService: Generated MOCK image embedding');
-        return _generateMockEmbedding('image_${imageBytes.hashCode}');
-      }
-    } catch (e) {
-      debugPrint('EmbeddingService: Failed to generate image embedding: $e');
-      return _generateMockEmbedding('image_${imageBytes.hashCode}');
+    if (_onnxClient == null || !_onnxClient!.isImageEncoderReady) {
+      throw StateError('ONNX image encoder not ready.');
     }
+
+    final float32Embedding = await _onnxClient!.embedImage(imageBytes);
+    return float32Embedding.toList();
   }
 
   /// Generate embeddings for multiple queries in batch
@@ -187,8 +330,8 @@ class EmbeddingService {
 
   /// Compute similarity between two embeddings
   double computeSimilarity(List<double> a, List<double> b) {
-    if (_embeddingClient != null) {
-      return _embeddingClient!.cosineSimilarity(
+    if (_onnxClient != null) {
+      return _onnxClient!.cosineSimilarity(
         Float32List.fromList(a),
         Float32List.fromList(b),
       );
@@ -200,7 +343,7 @@ class EmbeddingService {
   String _normalizeQuery(String query) {
     final normalized = _normalizer.normalize(query);
     if (normalized != query) {
-      debugPrint('EmbeddingService: Normalized "$query" → "$normalized"');
+      debugPrint('EmbeddingService: Normalized "$query" -> "$normalized"');
     }
     return normalized;
   }
@@ -217,7 +360,6 @@ class EmbeddingService {
   /// Clear the embedding cache
   void clearCache() {
     _embeddingCache.clear();
-    debugPrint('EmbeddingService: Cache cleared');
   }
 
   /// Get cache statistics
@@ -226,42 +368,34 @@ class EmbeddingService {
       'size': _embeddingCache.length,
       'maxSize': _maxCacheSize,
       'utilization': _embeddingCache.length / _maxCacheSize,
-      'mode': _embeddingClient?.isTextEncoderReady == true ? 'real' : 'mock',
+      'backend': _activeBackend.name,
+      'variant': _activeVariant?.name,
+      'isTextReady': isTextReady,
+      'isImageReady': isImageReady,
     };
   }
 
   /// Dispose of resources
   void dispose() {
-    _embeddingClient?.dispose();
-    _embeddingClient = null;
-    clearCache();
+    _onnxClient?.dispose();
+    _onnxClient = null;
+    _embeddingCache.clear();
     _isInitialized = false;
-    debugPrint('EmbeddingService: Disposed');
-  }
-
-  // ========== Fallback Mock Implementation ==========
-
-  /// Generate a mock embedding vector (deterministic based on hash)
-  List<double> _generateMockEmbedding(String input) {
-    final hash = input.hashCode;
-    final random = _SeededRandom(hash);
-    return List.generate(
-      embeddingDimension,
-      (index) => (random.nextDouble() * 2) - 1,
-    );
+    _activeBackend = EmbeddingBackend.mock;
+    _activeVariant = null;
   }
 
   /// Cosine similarity fallback
   double _cosineSimilarity(List<double> a, List<double> b) {
     if (a.length != b.length) return 0.0;
-    
+
     double dot = 0.0, normA = 0.0, normB = 0.0;
     for (int i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
       normA += a[i] * a[i];
       normB += b[i] * b[i];
     }
-    
+
     final denominator = _sqrt(normA) * _sqrt(normB);
     return denominator == 0 ? 0.0 : dot / denominator;
   }
@@ -273,16 +407,5 @@ class EmbeddingService {
       guess = (guess + x / guess) / 2;
     }
     return guess;
-  }
-}
-
-/// Simple seeded random for deterministic mock embeddings
-class _SeededRandom {
-  int _seed;
-  _SeededRandom(this._seed);
-
-  double nextDouble() {
-    _seed = ((_seed * 1103515245) + 12345) & 0x7fffffff;
-    return _seed / 0x7fffffff;
   }
 }
