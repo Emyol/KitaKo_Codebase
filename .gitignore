@@ -38,6 +38,10 @@ pubspec.lock
 # But keep specific DLLs that are needed
 !packages/kitako_ann/kitako_ffi.dll
 
+# Local test image datasets (multi-GB, dev-only)
+# See docs/development/TEST_DATASETS.md for setup.
+/test_datasets/
+
 # Large model/asset files
 assets/models/*.onnx
 assets/models/onnx/

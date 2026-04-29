@@ -33,6 +33,10 @@ class OnnxEmbeddingService {
   SiglipModelVersion get modelVersion =>
       _isInitialized ? _modelConfig.version : SiglipModelVersion.siglip2;
 
+  /// Active execution provider for each encoder ('nnapi', 'coreml', 'xnnpack', 'cpu').
+  String get imageEp => _inference.imageEp;
+  String get textEp => _inference.textEp;
+
   /// Initializes the service with the given model file paths.
   ///
   /// [visionModelPath] and [textModelPath] must be file system paths to `.onnx`
@@ -58,6 +62,22 @@ class OnnxEmbeddingService {
     }
     final preprocessed =
         await ImagePreprocessor.preprocessImageAsync(imageBytes);
+    final embedding = await _inference.embedImage(preprocessed);
+    return _l2Normalize(embedding);
+  }
+
+  /// Generates a normalized embedding from pre-decoded RGBA bytes.
+  ///
+  /// Prefer this over [embedImage] when the caller already holds decoded
+  /// pixels (e.g. from [dart:ui.instantiateImageCodec]), since it skips
+  /// the full-resolution JPEG decode step.
+  Future<Float32List> embedImageFromRgba(
+      Uint8List rgba, int width, int height) async {
+    if (!isImageEncoderReady) {
+      throw StateError('Image encoder not ready. Call initialize() first.');
+    }
+    final preprocessed =
+        await ImagePreprocessor.preprocessRgbaAsync(rgba, width, height);
     final embedding = await _inference.embedImage(preprocessed);
     return _l2Normalize(embedding);
   }

@@ -7,6 +7,7 @@ import 'embedding_service.dart';
 import 'embedding_storage_service.dart';
 import 'ann_search_service.dart';
 import 'query_assist_service.dart';
+import 'face_service.dart';
 
 /// High-level phase of the startup indexing pipeline.
 enum IndexingPhase {
@@ -16,6 +17,7 @@ enum IndexingPhase {
   restoringCache,
   loadingGallery,
   embedding,
+  embeddingPartialFailure,
   savingCache,
   switchingVariant,
   ready,
@@ -36,12 +38,16 @@ class IndexingProgress {
   /// Error message when [phase] is [IndexingPhase.error].
   final String? error;
 
+  /// Number of images that failed to embed (for [IndexingPhase.embeddingPartialFailure]).
+  final int? failedCount;
+
   const IndexingProgress({
     required this.phase,
     required this.message,
     this.done,
     this.total,
     this.error,
+    this.failedCount,
   });
 
   /// Fractional progress 0.0–1.0 if known, else null.
@@ -84,16 +90,21 @@ class ImageSearchService {
   final TaglishNormalizer _normalizer = const TaglishNormalizer();
   final QueryAssistService _queryAssist = QueryAssistService();
 
-  /// Create a new ImageSearchService with optional custom services
+  /// Optional face recognition service. Null = face features disabled.
+  final FaceService? _faceService;
+
+  /// Create a new ImageSearchService with optional custom services.
   ///
-  /// If services are not provided, default instances will be created.
+  /// [faceService] is fully optional — omit to disable face features.
   ImageSearchService({
     ImageLoaderService? imageLoader,
     EmbeddingService? embeddingService,
     ANNSearchService? annSearchService,
+    FaceService? faceService,
   }) : _imageLoader = imageLoader ?? ImageLoaderService(),
        _embeddingService = embeddingService ?? EmbeddingService(),
-       _annSearch = annSearchService ?? ANNSearchService();
+       _annSearch = annSearchService ?? ANNSearchService(),
+       _faceService = faceService;
 
   // ========== State Management ==========
 
@@ -109,6 +120,10 @@ class ImageSearchService {
   /// Last progress snapshot (so late subscribers see current state)
   IndexingProgress _lastProgress =
       const IndexingProgress(phase: IndexingPhase.idle, message: '');
+
+  /// Resolves to true (retry) or false (skip) when the UI responds to a partial
+  /// embedding failure prompt.
+  Completer<bool>? _embeddingFailureCompleter;
 
   /// Current search state
   SearchState _currentState = const SearchState();
@@ -138,6 +153,7 @@ class ImageSearchService {
     int? done,
     int? total,
     String? error,
+    int? failedCount,
   }) {
     _lastProgress = IndexingProgress(
       phase: phase,
@@ -145,19 +161,70 @@ class ImageSearchService {
       done: done,
       total: total,
       error: error,
+      failedCount: failedCount,
     );
     if (!_progressController.isClosed) {
       _progressController.add(_lastProgress);
     }
   }
 
-  // ========== Service Access (for Alpha Testing) ==========
+  // ========== Service Access ==========
 
-  /// Access to image loader service (for alpha testing)
+  /// Access to image loader service (for alpha testing and person detail screen)
   ImageLoaderService get imageLoader => _imageLoader;
 
   /// Access to ANN search service (for alpha testing with brute force)
   ANNSearchService get annSearchService => _annSearch;
+
+  /// Access to face service. Null when face recognition is disabled.
+  FaceService? get faceService => _faceService;
+
+  /// Whether face recognition features are available.
+  bool get isFaceSearchAvailable => _faceService?.isAvailable ?? false;
+
+  /// Run face detection + clustering over the loaded gallery.
+  ///
+  /// Call this once after [FaceService.tryAutoInitialize] returns true.
+  /// Images are loaded and processed in small batches so peak memory stays
+  /// bounded; the face pipeline is released between batches by the GC.
+  Future<void> startFaceIndexing() async {
+    final face = _faceService;
+    if (face == null || !face.isAvailable) return;
+
+    final images = getAllImages();
+    if (images.isEmpty) return;
+
+    debugPrint('ImageSearchService: Starting face indexing for ${images.length} images');
+
+    const batchSize = 10;
+    for (int i = 0; i < images.length; i += batchSize) {
+      final batch = images.sublist(i, (i + batchSize).clamp(0, images.length));
+      final entries = <MapEntry<String, Uint8List>>[];
+
+      for (final img in batch) {
+        try {
+          final bytes = await _imageLoader.loadImageBytes(img.id);
+          if (bytes != null) entries.add(MapEntry(img.id, bytes));
+        } catch (e) {
+          debugPrint('ImageSearchService: Face indexing — skipping ${img.id}: $e');
+        }
+      }
+
+      if (entries.isNotEmpty) {
+        await face.indexImageBatch(entries);
+      }
+
+      debugPrint(
+        'ImageSearchService: Face indexing ${(i + batchSize).clamp(0, images.length)}/${images.length}',
+      );
+    }
+
+    face.finalizeClustering();
+    debugPrint(
+      'ImageSearchService: Face indexing complete — '
+      '${face.faceCount} faces, ${face.personCount} persons',
+    );
+  }
 
   // ========== Algorithm Preference ==========
 
@@ -172,6 +239,68 @@ class ImageSearchService {
 
   /// Snapshot of ANN index state for display in the alpha test screen.
   Map<String, dynamic> get annIndexStatus => _annSearch.getIndexStats();
+
+  // ========== Memory pressure / lifecycle ==========
+
+  /// Release non-essential in-memory buffers. Safe to call at any time —
+  /// the index, embeddings, and image metadata are untouched. Currently
+  /// drops thumbnail byte buffers (which can total multiple GB at scale)
+  /// and clears the last search result so its retained images don't
+  /// pin thumbnails. Callers: lifecycle observer on memory pressure.
+  void releaseTransientMemory() {
+    _imageLoader.clearThumbnailBytes();
+    _currentState = const SearchState();
+    if (!_searchStateController.isClosed) {
+      _searchStateController.add(_currentState);
+    }
+  }
+
+  // ========== ANN Tuning (Alpha Test) ==========
+
+  /// Adjust HNSW's runtime accuracy/speed knob. Higher ef → more accurate
+  /// per query, but slower. No-op if HNSW isn't loaded.
+  void setHnswEfSearch(int ef) => _annSearch.setHnswEfSearch(ef);
+
+  /// Rebuild the IVF-PQ index with caller-provided overrides on top of the
+  /// adaptive defaults. Slow path — re-runs k-means + PQ training.
+  Future<bool> retrainIvfpq({
+    int? numClusters,
+    int? numSubquantizers,
+    int? numProbes,
+    int? trainingIterations,
+  }) {
+    return _annSearch.retrainIvfpq(
+      numClusters: numClusters,
+      numSubquantizers: numSubquantizers,
+      numProbes: numProbes,
+      trainingIterations: trainingIterations,
+    );
+  }
+
+  // ========== Active Dataset (Test Set Toggle) ==========
+
+  /// Currently active test dataset (e.g. `personal_1k`), or null if none.
+  String? get activeDataset => _imageLoader.activeDataset;
+
+  /// Datasets discovered on disk during loader init.
+  Set<String> get availableDatasets => _imageLoader.availableDatasets;
+
+  /// Switch which test set is searched. The other set's embeddings stay
+  /// in the index and cache — switching is just a results filter.
+  Future<bool> setActiveDataset(String dirName) {
+    return _imageLoader.setActiveDataset(dirName);
+  }
+
+  /// Filter ANN results to the currently active dataset. Returns the input
+  /// unchanged if no dataset is active.
+  List<SearchResultWithScore> _filterByActiveDataset(
+    List<SearchResultWithScore> results,
+  ) {
+    if (_imageLoader.activeDataset == null) return results;
+    return results
+        .where((r) => _imageLoader.isInActiveDataset(r.image.id))
+        .toList(growable: false);
+  }
 
   /// Set the preferred search algorithm shown in Settings.
   ///
@@ -308,30 +437,14 @@ class ImageSearchService {
         await _embeddingService.switchToVariant(currentVariant);
       }
 
-      // Load device gallery (thumbnails) so search results can render.
+      // Load device gallery metadata so the grid can render lazily from disk.
       _emitProgress(IndexingPhase.loadingGallery, 'Loading device gallery…');
       final allImages = await _imageLoader.loadDeviceImages();
       if (allImages.isNotEmpty) {
-        final imagesWithThumbs = <ImageItem>[];
-        final total = allImages.take(1000).length;
-        var done = 0;
-        for (final image in allImages.take(1000)) {
-          try {
-            final withThumb = await _imageLoader.getImageWithThumbnail(image.id);
-            imagesWithThumbs.add(withThumb);
-          } catch (_) {
-            imagesWithThumbs.add(image);
-          }
-          done++;
-          if (done == 1 || done % 50 == 0 || done == total) {
-            _emitProgress(IndexingPhase.loadingGallery,
-                'Loading gallery ($done/$total)…',
-                done: done, total: total);
-          }
-        }
-        _loadedImages = imagesWithThumbs;
-        _imagesLoadedController.add(imagesWithThumbs);
-        debugPrint('ImageSearchService: Loaded ${imagesWithThumbs.length} images for gallery');
+        final gallery = allImages.take(1000).toList();
+        _loadedImages = gallery;
+        _imagesLoadedController.add(gallery);
+        debugPrint('ImageSearchService: Loaded ${gallery.length} images for gallery');
       }
 
       _isInitialized = true;
@@ -410,31 +523,23 @@ class ImageSearchService {
       embeddingSw.stop();
 
       // Step 2: Search with scores (no threshold — combo filter handles it)
+      // Oversample so dataset filtering still leaves >= k candidates when
+      // the active dataset is sparsely represented in the global top-k.
       final searchSw = Stopwatch()..start();
-      final scoredResults = await _annSearch.searchSimilarWithScores(
+      final raw = await _annSearch.searchSimilarWithScores(
         queryEmbedding,
-        k: k,
+        k: k * 8,
         threshold: -1.0,
       );
       searchSw.stop();
 
-      // Step 3: Apply combo filter (absolute floor + relative cutoff)
-      final filtered = _applyComboFilter(scoredResults);
+      // Step 3: Filter to active dataset, take top-k, then apply combo filter.
+      final scoped = _filterByActiveDataset(raw).take(k).toList();
+      final filtered = _applyComboFilter(scoped);
 
-      // Step 4: Load thumbnails for search results
-      debugPrint('ImageSearchService: Loading thumbnails for ${filtered.length} results...');
-      final imagesWithThumbnails = <ImageItem>[];
-      final scores = <double>[];
-      for (final result in filtered) {
-        try {
-          final imageWithThumb = await _imageLoader.getImageWithThumbnail(result.image.id);
-          imagesWithThumbnails.add(imageWithThumb);
-        } catch (e) {
-          debugPrint('ImageSearchService: Failed to load thumbnail for ${result.image.id}: $e');
-          imagesWithThumbnails.add(result.image);
-        }
-        scores.add(result.similarity);
-      }
+      // Step 4: Collect results (thumbnails are loaded lazily by the grid).
+      final imagesWithThumbnails = filtered.map((r) => r.image).toList();
+      final scores = filtered.map((r) => r.similarity).toList();
 
       stopwatch.stop();
       debugPrint(
@@ -504,6 +609,53 @@ class ImageSearchService {
     _updateState(const SearchState());
   }
 
+  /// Search for images containing a person with the given label.
+  ///
+  /// Delegates to [FaceService.searchByPersonLabel] and then loads
+  /// thumbnails for matching image IDs. No-op if face service is unavailable.
+  Future<void> searchByPerson(String label) async {
+    final face = _faceService;
+    if (face == null || !face.isAvailable) return;
+
+    _updateState(SearchState(
+      status: SearchStatus.searching,
+      query: 'Person: $label',
+    ));
+
+    try {
+      final imageIds = face.searchByPersonLabel(label);
+
+      final images = imageIds
+          .map((id) => getImageById(id))
+          .whereType<ImageItem>()
+          .toList();
+
+      if (images.isEmpty) {
+        _updateState(SearchState(
+          status: SearchStatus.noResults,
+          query: 'Person: $label',
+          result: const SearchResult(images: [], scores: [], query: ''),
+        ));
+      } else {
+        _updateState(SearchState(
+          status: SearchStatus.success,
+          query: 'Person: $label',
+          result: SearchResult(
+            images: images,
+            scores: List.filled(images.length, 1.0),
+            query: 'Person: $label',
+          ),
+        ));
+      }
+    } catch (e) {
+      _updateState(SearchState(
+        status: SearchStatus.error,
+        query: 'Person: $label',
+        error: e.toString(),
+      ));
+    }
+  }
+
   /// Search for similar images using an image query (image-to-image search)
   ///
   /// This method:
@@ -544,30 +696,21 @@ class ImageSearchService {
         queryImageBytes,
       );
 
-      // Step 2: Search with scores
-      final scoredResults = await _annSearch.searchSimilarWithScores(
+      // Step 2: Search with scores. Oversample so dataset filtering leaves
+      // enough candidates when the active dataset is sparsely represented.
+      final raw = await _annSearch.searchSimilarWithScores(
         queryEmbedding,
-        k: k,
+        k: k * 8,
         threshold: -1.0,
       );
 
-      // Step 3: Apply combo filter (image-to-image uses a different threshold)
-      final filtered = _applyComboFilter(scoredResults, isImageSearch: true);
+      // Step 3: Filter to active dataset, take top-k, then apply combo filter.
+      final scoped = _filterByActiveDataset(raw).take(k).toList();
+      final filtered = _applyComboFilter(scoped, isImageSearch: true);
 
-      // Step 4: Load thumbnails for search results
-      debugPrint('ImageSearchService: Loading thumbnails for ${filtered.length} results...');
-      final imagesWithThumbnails = <ImageItem>[];
-      final scores = <double>[];
-      for (final result in filtered) {
-        try {
-          final imageWithThumb = await _imageLoader.getImageWithThumbnail(result.image.id);
-          imagesWithThumbnails.add(imageWithThumb);
-        } catch (e) {
-          debugPrint('ImageSearchService: Failed to load thumbnail for ${result.image.id}: $e');
-          imagesWithThumbnails.add(result.image);
-        }
-        scores.add(result.similarity);
-      }
+      // Step 4: Collect results (thumbnails are loaded lazily by the grid).
+      final imagesWithThumbnails = filtered.map((r) => r.image).toList();
+      final scores = filtered.map((r) => r.similarity).toList();
 
       stopwatch.stop();
       debugPrint(
@@ -683,6 +826,15 @@ class ImageSearchService {
     };
   }
 
+  // ========== Embedding failure response ==========
+
+  /// Called by the UI when the user responds to an [IndexingPhase.embeddingPartialFailure]
+  /// prompt. Pass [retry] = true to re-embed failed images, false to skip them
+  /// and continue to [IndexingPhase.ready] with what was already embedded.
+  void continueAfterEmbeddingFailure({required bool retry}) {
+    _embeddingFailureCompleter?.complete(retry);
+  }
+
   // ========== Cleanup ==========
 
   /// Dispose of all resources
@@ -795,8 +947,13 @@ class ImageSearchService {
         );
       }
 
-      const maxImagesToIndex = 1000;
-      final imagesToProcess = allImages.take(maxImagesToIndex).toList();
+      // Only embed personal images for now — scraped test images are excluded
+      // from the indexing pipeline to avoid burning embedding time on them.
+      // Search-time filtering by active dataset still works for both sets.
+      final scrapedPrefix = TestDataset.scraped.idPrefix();
+      final imagesToProcess = allImages
+          .where((img) => !img.id.startsWith(scrapedPrefix))
+          .toList();
 
       // ── Step 1: Try loading cached embeddings from storage layer ──
       final visionEncoderId =
@@ -867,33 +1024,56 @@ class ImageSearchService {
       int successCount = 0;
       int failedCount = 0;
 
-      const batchSize = 10;
+      // Concurrency is bounded by per-isolate decode memory, NOT by ONNX
+      // throughput. A 4032×3024 phone JPEG decodes to a ~48 MB RGBA buffer
+      // inside compute() before the preprocessor resizes it; running that
+      // in 10 isolates concurrently pushes ~500 MB of decode buffers on top
+      // of the ~625 MB SigLIP model and OOMs Android. 5 keeps reasonable I/O
+      // overlap; if an entire batch fails it is retried one-by-one before
+      // counting images as permanently failed.
+      const batchSize = 5;
 
-      for (var batchStart = 0; batchStart < newImages.length; batchStart += batchSize) {
+      final failedImages = <ImageItem>[];
+
+      Future<({ImageItem image, List<double> embedding, bool success})>
+          embedOne(ImageItem image) async {
+        try {
+          final decoded = await _imageLoader.loadResizedForEmbedding(image.id);
+          if (decoded != null) {
+            final embedding = await _embeddingService
+                .generateImageEmbeddingFromRgba(
+                    decoded.rgba, decoded.width, decoded.height);
+            return (image: image, embedding: embedding, success: true);
+          }
+        } catch (e) {
+          debugPrint('ImageSearchService: Failed to embed ${image.id}: $e');
+        }
+        return (image: image, embedding: <double>[], success: false);
+      }
+
+      for (var batchStart = 0;
+          batchStart < newImages.length;
+          batchStart += batchSize) {
         final batchEnd = (batchStart + batchSize).clamp(0, newImages.length);
         final batch = newImages.sublist(batchStart, batchEnd);
 
-        final futures = batch.map((image) async {
-          try {
-            final bytes = await _imageLoader.loadThumbnail(image.id);
-            if (bytes != null && bytes.isNotEmpty) {
-              final embedding = await _embeddingService.generateImageEmbedding(bytes);
-              return (image: image, embedding: embedding, success: true);
-            }
-          } catch (e) {
-            debugPrint('ImageSearchService: Failed to embed ${image.id}: $e');
-          }
-          return (image: image, embedding: <double>[], success: false);
-        }).toList();
+        final results =
+            await Future.wait(batch.map(embedOne));
 
-        final results = await Future.wait(futures);
+        // If the entire batch failed, retry each image individually to avoid
+        // contention being the root cause of all failures.
+        final allFailed = results.every((r) => !r.success);
+        final effective = allFailed && batch.length > 1
+            ? await Future.wait(batch.map(embedOne))
+            : results;
 
-        for (final result in results) {
+        for (final result in effective) {
           if (result.success) {
             newlyIndexed.add(result.image);
             newEmbeddings.add(result.embedding);
             successCount++;
           } else {
+            failedImages.add(result.image);
             failedCount++;
           }
         }
@@ -907,9 +1087,10 @@ class ImageSearchService {
             : '?';
         final remaining = total - batchEnd;
         final etaSec = successCount > 0
-            ? (remaining * stopwatch.elapsedMilliseconds / successCount / 1000).toStringAsFixed(0)
+            ? (remaining * stopwatch.elapsedMilliseconds / successCount / 1000)
+                .toStringAsFixed(0)
             : '?';
-        final barWidth = 20;
+        const barWidth = 20;
         final filled = (batchEnd / total * barWidth).round();
         final empty = barWidth - filled;
         final bar = '${'█' * filled}${'░' * empty}';
@@ -926,12 +1107,33 @@ class ImageSearchService {
         );
       }
 
-      // Sanity check
-      if (successCount == 0 && newImages.isNotEmpty) {
-        throw StateError(
-          'All ${newImages.length} new images failed to embed. '
-          'The model may not be loaded correctly.',
+      // If some images failed, pause and let the user decide whether to retry
+      // or skip. A retry re-embeds the failed images one-by-one.
+      if (failedCount > 0) {
+        _embeddingFailureCompleter = Completer<bool>();
+        _emitProgress(
+          IndexingPhase.embeddingPartialFailure,
+          '$failedCount image${failedCount == 1 ? '' : 's'} failed to embed',
+          failedCount: failedCount,
+          error: successCount == 0
+              ? 'No images could be embedded — model may not be loaded correctly.'
+              : null,
         );
+        final retry = await _embeddingFailureCompleter!.future;
+        _embeddingFailureCompleter = null;
+
+        if (retry) {
+          debugPrint('ImageSearchService: Retrying ${failedImages.length} failed images…');
+          for (final image in failedImages) {
+            final result = await embedOne(image);
+            if (result.success) {
+              newlyIndexed.add(result.image);
+              newEmbeddings.add(result.embedding);
+              successCount++;
+              failedCount--;
+            }
+          }
+        }
       }
 
       // Index the newly embedded images
@@ -1007,24 +1209,13 @@ class ImageSearchService {
     }
   }
 
-  /// Load thumbnails for the given images and notify listeners.
+  /// Notify listeners that the indexed image list is ready.
+  /// Thumbnails are loaded lazily by the grid from [ImageItem.path].
   Future<void> _loadThumbnailsAndNotify(List<ImageItem> images) async {
-    debugPrint('ImageSearchService: Loading thumbnails for ${images.length} images...');
-    final imagesWithThumbnails = <ImageItem>[];
-    for (final image in images) {
-      try {
-        final imageWithThumb = await _imageLoader.getImageWithThumbnail(image.id);
-        imagesWithThumbnails.add(imageWithThumb);
-      } catch (e) {
-        debugPrint('ImageSearchService: Failed to load thumbnail for ${image.id}: $e');
-        imagesWithThumbnails.add(image);
-      }
-    }
-
-    _loadedImages = imagesWithThumbnails;
-    _indexedCount = imagesWithThumbnails.length;
-    _imagesLoadedController.add(imagesWithThumbnails);
-    debugPrint('ImageSearchService: Gallery ready with ${imagesWithThumbnails.length} images');
+    _loadedImages = images;
+    _indexedCount = images.length;
+    _imagesLoadedController.add(images);
+    debugPrint('ImageSearchService: Gallery ready with ${images.length} images');
   }
 
   // ========== Model Management ==========

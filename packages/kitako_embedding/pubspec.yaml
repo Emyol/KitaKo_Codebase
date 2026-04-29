@@ -14,6 +14,8 @@ dependencies:
   onnxruntime_v2: ^1.23.2
   path_provider: ^2.1.0
   image: ^4.3.0
+  kitako_core:
+    path: ../kitako_core
 
 dev_dependencies:
   flutter_test:

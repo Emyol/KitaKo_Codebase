@@ -41,6 +41,31 @@ class ImagePreprocessor {
     return compute(_preprocessInIsolate, imageBytes);
   }
 
+  /// Preprocesses already-decoded RGBA bytes in a background isolate.
+  ///
+  /// Use this with [ImageLoaderService.loadResizedForEmbedding] to avoid
+  /// decoding full-resolution JPEGs in the isolate. The RGBA bytes must be
+  /// tightly packed (width × height × 4 bytes, row-major).
+  static Future<Float32List> preprocessRgbaAsync(
+      Uint8List rgba, int width, int height) {
+    return compute(
+      _preprocessRgbaInIsolate,
+      (rgba: rgba, width: width, height: height),
+    );
+  }
+
+  static Float32List _preprocessRgbaInIsolate(
+      ({Uint8List rgba, int width, int height}) args) {
+    final image = img.Image.fromBytes(
+      width: args.width,
+      height: args.height,
+      bytes: args.rgba.buffer,
+      numChannels: 4,
+      order: img.ChannelOrder.rgba,
+    );
+    return _preprocessDecodedImageFast(image);
+  }
+
   /// Internal function that runs in isolate
   static Float32List _preprocessInIsolate(Uint8List imageBytes) {
     final image = img.decodeImage(imageBytes);

@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:kitako_ann/kitako_ann.dart' as ann;
 import '../../models/search_models.dart';
+import '../../services/image_loader_service.dart';
 import '../../services/image_search_service.dart';
 import '../../services/embedding_service.dart';
 
@@ -37,8 +39,24 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   bool _searching = false;
   bool _switchingModel = false;
   bool _runningRecall = false;
+  bool _switchingDataset = false;
+  bool _retrainingIvfpq = false;
+  bool _headerVisible = true;
 
   _SearchMethod _searchMethod = _SearchMethod.bruteForce;
+
+  // ── HNSW tuning state ──
+  double _hnswEf = 50;
+
+  // ── IVF-PQ tuning state ──
+  bool _ivfAdvancedExpanded = false;
+  // Staged values for retrain (committed when the user taps Retrain).
+  int? _ivfClustersStaged;
+  int? _ivfSubquantizersStaged;
+  int? _ivfProbesStaged;
+  int? _ivfTrainingItersStaged;
+
+  static const List<int> _validIvfSubquantizers = [8, 12, 16, 24, 32, 48, 64, 96];
 
   int _elapsedMs = 0;
   int? _memoryDeltaBytes;
@@ -64,6 +82,62 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
       case _SearchMethod.hnsw:
         widget.searchService.setForceBruteForce(false);
         widget.searchService.setPreferredAlgorithm(true); // HNSW
+    }
+  }
+
+  // ── IVF-PQ retrain ───────────────────────────────────────────────────────
+
+  Future<void> _retrainIvfpq() async {
+    if (_retrainingIvfpq) return;
+    setState(() => _retrainingIvfpq = true);
+    try {
+      final ok = await widget.searchService.retrainIvfpq(
+        numClusters: _ivfClustersStaged,
+        numSubquantizers: _ivfSubquantizersStaged,
+        numProbes: _ivfProbesStaged,
+        trainingIterations: _ivfTrainingItersStaged,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(ok
+                ? 'IVF-PQ retrained — staged params applied'
+                : 'IVF-PQ retrain failed (need ≥50 indexed images)'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _retrainingIvfpq = false);
+    }
+  }
+
+  // ── Dataset switch ───────────────────────────────────────────────────────
+
+  Future<void> _switchDataset(TestDataset dataset) async {
+    if (_switchingDataset) return;
+    setState(() => _switchingDataset = true);
+    try {
+      final ok = await widget.searchService.setActiveDataset(dataset.dirName);
+      if (mounted) {
+        if (!ok) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '${dataset.label} dataset not found on disk — '
+                'see docs/development/TEST_DATASETS.md',
+              ),
+            ),
+          );
+        } else {
+          // Re-run last query against the new active dataset, if any.
+          if (_queryController.text.trim().isNotEmpty &&
+              _lastState.status == SearchStatus.success) {
+            _runQuery();
+          }
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _switchingDataset = false);
     }
   }
 
@@ -194,6 +268,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
       body: Column(
         children: [
           // ── Settings Card ───────────────────────────────────────────────
+          if (_headerVisible)
           Container(
             color: surfaceColor,
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
@@ -241,14 +316,64 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                // Search method row
+                const SizedBox(height: 8),
+                // Algorithm selector — 3-button row (face-style)
+                _AlgorithmSelector(
+                  selected: _searchMethod,
+                  onChanged: _applySearchMethod,
+                  isDark: isDark,
+                ),
+                // Conditional tuning panels
+                if (_searchMethod == _SearchMethod.hnsw) ...[
+                  const SizedBox(height: 10),
+                  _HnswTunerPanel(
+                    ef: _hnswEf,
+                    onChanged: (v) {
+                      setState(() => _hnswEf = v);
+                      widget.searchService.setHnswEfSearch(v.round());
+                    },
+                    isDark: isDark,
+                  ),
+                ],
+                if (_searchMethod == _SearchMethod.ivfPq) ...[
+                  const SizedBox(height: 10),
+                  _IvfpqTunerPanel(
+                    activeConfig: widget.searchService.annSearchService
+                        .activeIvfpqConfig,
+                    indexSize: widget.searchService.indexedImageCount,
+                    advancedExpanded: _ivfAdvancedExpanded,
+                    onAdvancedToggled: (v) =>
+                        setState(() => _ivfAdvancedExpanded = v),
+                    stagedClusters: _ivfClustersStaged,
+                    stagedSubquantizers: _ivfSubquantizersStaged,
+                    stagedProbes: _ivfProbesStaged,
+                    stagedTrainingIters: _ivfTrainingItersStaged,
+                    onClustersChanged: (v) => setState(() {
+                      _ivfClustersStaged = v;
+                      if (_ivfProbesStaged != null && _ivfProbesStaged! > v) {
+                        _ivfProbesStaged = v;
+                      }
+                    }),
+                    onSubquantizersChanged: (v) =>
+                        setState(() => _ivfSubquantizersStaged = v),
+                    onProbesChanged: (v) =>
+                        setState(() => _ivfProbesStaged = v),
+                    onTrainingItersChanged: (v) =>
+                        setState(() => _ivfTrainingItersStaged = v),
+                    validSubquantizers: _validIvfSubquantizers,
+                    onRetrain: _retrainingIvfpq ? null : _retrainIvfpq,
+                    isRetraining: _retrainingIvfpq,
+                    isDark: isDark,
+                  ),
+                ],
+                const SizedBox(height: 8),
+                // Dataset toggle row
                 Row(
                   children: [
                     SizedBox(
                       width: 60,
                       child: Text(
-                        'Search',
+                        'Dataset',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -257,30 +382,19 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                       ),
                     ),
                     Expanded(
-                      child: DropdownButton<_SearchMethod>(
-                        isExpanded: true,
-                        isDense: true,
-                        value: _searchMethod,
-                        onChanged: (v) {
-                          if (v != null) _applySearchMethod(v);
-                        },
-                        items: _SearchMethod.values.map((v) {
-                          return DropdownMenuItem(
-                            value: v,
-                            child: Row(
-                              children: [
-                                Icon(v.icon, size: 14,
-                                    color: isDark
-                                        ? Colors.white70
-                                        : Colors.black54),
-                                const SizedBox(width: 6),
-                                Text(v.label,
-                                    style: const TextStyle(fontSize: 13)),
-                              ],
+                      child: _switchingDataset
+                          ? const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 4),
+                              child: LinearProgressIndicator(),
+                            )
+                          : _DatasetToggle(
+                              activeDirName:
+                                  widget.searchService.activeDataset,
+                              available:
+                                  widget.searchService.availableDatasets,
+                              onChanged: _switchDataset,
+                              isDark: isDark,
                             ),
-                          );
-                        }).toList(),
-                      ),
                     ),
                   ],
                 ),
@@ -322,7 +436,12 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
             ),
           ),
 
-          const Divider(height: 1),
+          // ── Header toggle strip ─────────────────────────────────────────
+          _HeaderToggleStrip(
+            visible: _headerVisible,
+            onToggle: () => setState(() => _headerVisible = !_headerVisible),
+            isDark: isDark,
+          ),
 
           // ── Query Row ───────────────────────────────────────────────────
           Padding(
@@ -437,6 +556,8 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
               indexSearchTimeMs: _lastState.result?.searchTimeMs,
               totalTimeMs: _elapsedMs,
               memoryDeltaBytes: _memoryDeltaBytes,
+              imageEp: _embedding.imageEp,
+              textEp: _embedding.textEp,
               isDark: isDark,
             ),
 
@@ -531,6 +652,621 @@ class _AnnStatusRow extends StatelessWidget {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Algorithm selector — 3-button row (face-branch style adapted to v2 services)
+// ──────────────────────────────────────────────────────────────────────────
+
+class _AlgorithmSelector extends StatelessWidget {
+  final _SearchMethod selected;
+  final ValueChanged<_SearchMethod> onChanged;
+  final bool isDark;
+
+  const _AlgorithmSelector({
+    required this.selected,
+    required this.onChanged,
+    required this.isDark,
+  });
+
+  static const _options = <_AlgoOption>[
+    _AlgoOption(
+      method: _SearchMethod.bruteForce,
+      label: 'Brute Force',
+      description: '100% accurate, O(n)',
+      icon: Icons.search,
+      color: Colors.green,
+    ),
+    _AlgoOption(
+      method: _SearchMethod.ivfPq,
+      label: 'IVF-PQ',
+      description: 'Fast approximate',
+      icon: Icons.bolt,
+      color: Colors.orange,
+    ),
+    _AlgoOption(
+      method: _SearchMethod.hnsw,
+      label: 'HNSW',
+      description: 'Graph-based (FFI)',
+      icon: Icons.hub,
+      color: Colors.purple,
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < _options.length; i++) ...[
+          if (i > 0) const SizedBox(width: 6),
+          Expanded(
+            child: _AlgorithmButton(
+              option: _options[i],
+              isSelected: selected == _options[i].method,
+              onTap: () => onChanged(_options[i].method),
+              isDark: isDark,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AlgoOption {
+  final _SearchMethod method;
+  final String label;
+  final String description;
+  final IconData icon;
+  final Color color;
+
+  const _AlgoOption({
+    required this.method,
+    required this.label,
+    required this.description,
+    required this.icon,
+    required this.color,
+  });
+}
+
+class _AlgorithmButton extends StatelessWidget {
+  final _AlgoOption option;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final bool isDark;
+
+  const _AlgorithmButton({
+    required this.option,
+    required this.isSelected,
+    required this.onTap,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final base = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF5F5F5);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? option.color.withOpacity(0.15) : base,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected
+                ? option.color
+                : (isDark ? const Color(0xFF3A3A3A) : const Color(0xFFE0E0E0)),
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              option.icon,
+              color: isSelected
+                  ? option.color
+                  : (isDark ? Colors.white60 : Colors.black54),
+              size: 18,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              option.label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: isSelected
+                    ? option.color
+                    : (isDark ? Colors.white70 : Colors.black87),
+              ),
+            ),
+            Text(
+              option.description,
+              style: TextStyle(
+                fontSize: 9,
+                color: isDark ? Colors.white38 : Colors.black45,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// HNSW tuner — runtime ef slider
+// ──────────────────────────────────────────────────────────────────────────
+
+class _HnswTunerPanel extends StatelessWidget {
+  final double ef;
+  final ValueChanged<double> onChanged;
+  final bool isDark;
+
+  const _HnswTunerPanel({
+    required this.ef,
+    required this.onChanged,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.purple.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.purple.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.hub, size: 14, color: Colors.purple[700]),
+                  const SizedBox(width: 4),
+                  Text(
+                    'HNSW ef Search',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.purple[700],
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.purple.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'ef = ${ef.round()}',
+                  style: const TextStyle(
+                    color: Colors.purple,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              const Text('10', style: TextStyle(fontSize: 9, color: Colors.grey)),
+              Expanded(
+                child: Slider(
+                  value: ef.clamp(10, 500),
+                  min: 10,
+                  max: 500,
+                  divisions: 49,
+                  activeColor: Colors.purple,
+                  label: 'ef = ${ef.round()}',
+                  onChanged: onChanged,
+                ),
+              ),
+              const Text('500', style: TextStyle(fontSize: 9, color: Colors.grey)),
+            ],
+          ),
+          Text(
+            'Low ef = faster but less accurate. High ef = slower but more accurate.',
+            style: TextStyle(fontSize: 9, color: Colors.grey[500]),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// IVF-PQ tuner — staged params + retrain
+// ──────────────────────────────────────────────────────────────────────────
+
+class _IvfpqTunerPanel extends StatelessWidget {
+  final ann.IvfPqConfig? activeConfig;
+  final int indexSize;
+  final bool advancedExpanded;
+  final ValueChanged<bool> onAdvancedToggled;
+
+  final int? stagedClusters;
+  final int? stagedSubquantizers;
+  final int? stagedProbes;
+  final int? stagedTrainingIters;
+
+  final ValueChanged<int> onClustersChanged;
+  final ValueChanged<int> onSubquantizersChanged;
+  final ValueChanged<int> onProbesChanged;
+  final ValueChanged<int> onTrainingItersChanged;
+
+  final List<int> validSubquantizers;
+  final VoidCallback? onRetrain;
+  final bool isRetraining;
+  final bool isDark;
+
+  const _IvfpqTunerPanel({
+    required this.activeConfig,
+    required this.indexSize,
+    required this.advancedExpanded,
+    required this.onAdvancedToggled,
+    required this.stagedClusters,
+    required this.stagedSubquantizers,
+    required this.stagedProbes,
+    required this.stagedTrainingIters,
+    required this.onClustersChanged,
+    required this.onSubquantizersChanged,
+    required this.onProbesChanged,
+    required this.onTrainingItersChanged,
+    required this.validSubquantizers,
+    required this.onRetrain,
+    required this.isRetraining,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final canTrain = indexSize >= 50;
+    final clusters = stagedClusters ?? activeConfig?.numClusters ?? 16;
+    final probes = stagedProbes ?? activeConfig?.numProbes ?? clusters;
+    final subs = stagedSubquantizers ?? activeConfig?.numSubquantizers ?? 64;
+    final iters =
+        stagedTrainingIters ?? activeConfig?.trainingIterations ?? 50;
+
+    final dirty = stagedClusters != null ||
+        stagedSubquantizers != null ||
+        stagedProbes != null ||
+        stagedTrainingIters != null;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header + status chip
+          Row(
+            children: [
+              Icon(Icons.tune, size: 14, color: Colors.orange[700]),
+              const SizedBox(width: 4),
+              Text(
+                'IVF-PQ Configuration',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange[700],
+                ),
+              ),
+              const Spacer(),
+              _StatusChip(
+                text: activeConfig != null
+                    ? 'TRAINED'
+                    : (canTrain ? 'NOT TRAINED' : 'NEED 50+ images'),
+                color: activeConfig != null
+                    ? Colors.green
+                    : (canTrain ? Colors.amber : Colors.red),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // nProbes slider — staged-only (retrain to apply)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'nProbes (search breadth)',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$probes / $clusters',
+                  style: TextStyle(
+                    color: Colors.orange[700],
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              const Text('1', style: TextStyle(fontSize: 9, color: Colors.grey)),
+              Expanded(
+                child: Slider(
+                  value: probes.clamp(1, clusters).toDouble(),
+                  min: 1,
+                  max: clusters.toDouble(),
+                  divisions: clusters > 1 ? clusters - 1 : 1,
+                  activeColor: Colors.orange,
+                  label: 'nProbes = $probes',
+                  onChanged: (v) => onProbesChanged(v.round()),
+                ),
+              ),
+              Text('$clusters', style: const TextStyle(fontSize: 9, color: Colors.grey)),
+            ],
+          ),
+          Text(
+            probes >= clusters
+                ? '⚠ All clusters probed (= brute force with PQ overhead)'
+                : '✓ Probing ${(probes / clusters * 100).toStringAsFixed(0)}% of clusters',
+            style: TextStyle(
+              fontSize: 9,
+              color: probes >= clusters ? Colors.orange : Colors.green[700],
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Advanced toggle
+          GestureDetector(
+            onTap: () => onAdvancedToggled(!advancedExpanded),
+            child: Row(
+              children: [
+                Icon(
+                  advancedExpanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: Colors.orange[700],
+                ),
+                Text(
+                  'Advanced settings',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.orange[700],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (advancedExpanded) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Clusters (IVF partitions)',
+              style: TextStyle(
+                fontSize: 10,
+                color: isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [8, 16, 32, 64, 128, 256].map((n) {
+                final isSelected = clusters == n;
+                return ChoiceChip(
+                  label: Text('$n', style: const TextStyle(fontSize: 11)),
+                  selected: isSelected,
+                  selectedColor: Colors.orange,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onSelected: (sel) {
+                    if (sel) onClustersChanged(n);
+                  },
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  'Sub-quantizers: ',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButton<int>(
+                    value: validSubquantizers.contains(subs) ? subs : 64,
+                    isExpanded: true,
+                    isDense: true,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                    items: validSubquantizers.map((n) {
+                      return DropdownMenuItem(
+                        value: n,
+                        child: Text(
+                          '$n subs (${768 ~/ n} dims/sub)',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (v) {
+                      if (v != null) onSubquantizersChanged(v);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Training iterations',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
+                ),
+                Text(
+                  '$iters',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.orange[700],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            Slider(
+              value: iters.clamp(5, 100).toDouble(),
+              min: 5,
+              max: 100,
+              divisions: 19,
+              activeColor: Colors.orange,
+              label: '$iters iters',
+              onChanged: (v) => onTrainingItersChanged(v.round()),
+            ),
+          ],
+          const SizedBox(height: 8),
+          // Retrain button — only enabled when staged params differ
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: isRetraining
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 14),
+              label: Text(
+                isRetraining
+                    ? 'Retraining…'
+                    : (dirty
+                        ? 'Apply staged params (retrain)'
+                        : 'Retrain with current params'),
+                style: const TextStyle(fontSize: 11),
+              ),
+              onPressed: canTrain ? onRetrain : null,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.orange,
+                side: const BorderSide(color: Colors.orange),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  final String text;
+  final Color color;
+  const _StatusChip({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 9,
+          color: color,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact dataset selector for the alpha screen. Renders a `SegmentedButton`
+/// over the two known test datasets; missing-on-disk datasets render disabled.
+class _DatasetToggle extends StatelessWidget {
+  final String? activeDirName;
+  final Set<String> available;
+  final ValueChanged<TestDataset> onChanged;
+  final bool isDark;
+
+  const _DatasetToggle({
+    required this.activeDirName,
+    required this.available,
+    required this.onChanged,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (TestDataset.all.every((d) => !available.contains(d.dirName))) {
+      return Text(
+        'No test datasets found',
+        style: TextStyle(
+          fontSize: 12,
+          fontStyle: FontStyle.italic,
+          color: isDark ? Colors.white54 : Colors.black45,
+        ),
+      );
+    }
+
+    final selected = <TestDataset>{
+      for (final d in TestDataset.all)
+        if (d.dirName == activeDirName) d,
+    };
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SegmentedButton<TestDataset>(
+        showSelectedIcon: false,
+        style: ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
+        ),
+        segments: TestDataset.all.map((d) {
+          final present = available.contains(d.dirName);
+          return ButtonSegment<TestDataset>(
+            value: d,
+            label: Text(present ? d.label : '${d.label} (missing)'),
+            enabled: present,
+          );
+        }).toList(),
+        selected: selected,
+        emptySelectionAllowed: true,
+        onSelectionChanged: (sel) {
+          if (sel.isNotEmpty) onChanged(sel.first);
+        },
+      ),
+    );
+  }
+}
+
 class _AnnChip extends StatelessWidget {
   final String label;
   final bool active;
@@ -619,6 +1355,8 @@ class _DiagnosticsPanel extends StatelessWidget {
   final int? indexSearchTimeMs;
   final int totalTimeMs;
   final int? memoryDeltaBytes;
+  final String imageEp;
+  final String textEp;
   final bool isDark;
 
   const _DiagnosticsPanel({
@@ -626,6 +1364,8 @@ class _DiagnosticsPanel extends StatelessWidget {
     required this.indexSearchTimeMs,
     required this.totalTimeMs,
     required this.memoryDeltaBytes,
+    required this.imageEp,
+    required this.textEp,
     required this.isDark,
   });
 
@@ -646,6 +1386,14 @@ class _DiagnosticsPanel extends StatelessWidget {
         'additional physical RAM was allocated. Near-zero is normal when results '
         'and thumbnails are small. A large positive value may indicate thumbnail '
         'buffering or ORT scratch buffers.',
+    'Vision EP':
+        'Execution provider active for the image encoder. '
+        'nnapi = Android neural-net accelerator, coreml = Apple ML, '
+        'xnnpack = optimised CPU (SIMD), cpu = plain ONNX CPU fallback.',
+    'Text EP':
+        'Execution provider active for the text encoder. '
+        'Same options as Vision EP — the two encoders may land on different backends '
+        'if the hardware accelerator rejects a particular graph.',
   };
 
   String _fmtDelta(int bytes) {
@@ -696,6 +1444,8 @@ class _DiagnosticsPanel extends StatelessWidget {
       ('Index search',  indexSearchTimeMs != null ? '${indexSearchTimeMs}ms' : '—'),
       ('Total time',    '${totalTimeMs}ms'),
       ('Memory (ΔRSS)', memoryDeltaBytes != null ? _fmtDelta(memoryDeltaBytes!) : '—'),
+      ('Vision EP',     imageEp),
+      ('Text EP',       textEp),
     ];
 
     return Container(
@@ -816,19 +1566,22 @@ class _ResultTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       dense: true,
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (_) => _FullImageViewer(image: image),
+      ),
       leading: SizedBox(
         width: 52,
         height: 52,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(4),
-          child: image.thumbnail != null
-              ? Image.memory(image.thumbnail!, fit: BoxFit.cover)
-              : Image.file(
-                  File(image.path),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      const Icon(Icons.broken_image, size: 28),
-                ),
+          child: Image.file(
+            File(image.path),
+            fit: BoxFit.cover,
+            cacheWidth: 256,
+            errorBuilder: (_, _, _) =>
+                const Icon(Icons.broken_image, size: 28),
+          ),
         ),
       ),
       title: Text(
@@ -916,6 +1669,109 @@ class _EmptyPanel extends StatelessWidget {
             style: TextStyle(
               color: isDark ? Colors.white38 : Colors.black38,
               fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Header toggle strip ────────────────────────────────────────────────────────
+
+class _HeaderToggleStrip extends StatelessWidget {
+  final bool visible;
+  final VoidCallback onToggle;
+  final bool isDark;
+
+  const _HeaderToggleStrip({
+    required this.visible,
+    required this.onToggle,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onToggle,
+      child: Container(
+        height: 22,
+        color: isDark ? const Color(0xFF141414) : const Color(0xFFECECEC),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              visible ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+              size: 16,
+              color: isDark ? Colors.white38 : Colors.black38,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              visible ? 'Hide settings' : 'Show settings',
+              style: TextStyle(
+                fontSize: 10,
+                color: isDark ? Colors.white38 : Colors.black38,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Full image viewer ──────────────────────────────────────────────────────────
+
+class _FullImageViewer extends StatelessWidget {
+  final ImageItem image;
+
+  const _FullImageViewer({required this.image});
+
+  @override
+  Widget build(BuildContext context) {
+    final imageWidget = Image.file(
+      File(image.path),
+      fit: BoxFit.contain,
+      errorBuilder: (_, _, _) => const Icon(Icons.broken_image, size: 64),
+    );
+
+    return Dialog(
+      backgroundColor: Colors.black87,
+      insetPadding: const EdgeInsets.all(12),
+      child: Stack(
+        children: [
+          InteractiveViewer(
+            minScale: 0.5,
+            maxScale: 8.0,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width,
+                  maxHeight: MediaQuery.of(context).size.height * 0.85,
+                ),
+                child: imageWidget,
+              ),
+            ),
+          ),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white70),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          Positioned(
+            bottom: 8,
+            left: 12,
+            right: 48,
+            child: Text(
+              image.name,
+              style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 12,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],

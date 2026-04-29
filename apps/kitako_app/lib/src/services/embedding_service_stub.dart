@@ -127,6 +127,8 @@ class OnnxEmbeddingService {
 
   SiglipModelConfig get modelConfig => throw UnsupportedError('Not supported on web');
   SiglipModelVersion get modelVersion => SiglipModelVersion.siglip2;
+  String get imageEp => 'cpu';
+  String get textEp => 'cpu';
 
   void initRuntime({SiglipModelVersion modelVersion = SiglipModelVersion.siglip2}) {
     throw UnsupportedError('OnnxEmbeddingService not supported on web');
@@ -146,6 +148,11 @@ class OnnxEmbeddingService {
   }
 
   Future<Float32List> embedImage(Uint8List imageBytes) async {
+    throw UnsupportedError('Not supported on web');
+  }
+
+  Future<Float32List> embedImageFromRgba(
+      Uint8List rgba, int width, int height) async {
     throw UnsupportedError('Not supported on web');
   }
 

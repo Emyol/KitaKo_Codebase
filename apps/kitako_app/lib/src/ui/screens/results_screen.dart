@@ -62,7 +62,7 @@ class ResultsScreen extends StatelessWidget {
             child: Text(
               '${searchResult.resultCount} result${searchResult.resultCount == 1 ? '' : 's'} found',
               style: TextStyle(
-                color: textColor.withOpacity(0.7),
+                color: textColor.withValues(alpha: 0.7),
                 fontSize: 14,
               ),
             ),
@@ -88,7 +88,7 @@ class ResultsScreen extends StatelessWidget {
         color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -124,7 +124,7 @@ class ResultsScreen extends StatelessWidget {
             Text(
               'Search completed in ${searchResult.searchTimeMs}ms',
               style: TextStyle(
-                color: textColor.withOpacity(0.5),
+                color: textColor.withValues(alpha: 0.5),
                 fontSize: 12,
               ),
             ),
@@ -266,7 +266,7 @@ class ResultsScreen extends StatelessWidget {
                     _formatFileSize(image.sizeBytes),
                     style: TextStyle(
                       color: (isDark ? Colors.white : Colors.black87)
-                          .withOpacity(0.5),
+                          .withValues(alpha: 0.5),
                       fontSize: 11,
                     ),
                   ),
@@ -279,31 +279,14 @@ class ResultsScreen extends StatelessWidget {
     );
   }
 
-  /// Build the image widget - tries to load from file, falls back to placeholder
+  /// Build the image widget - loads lazily from file at thumbnail resolution.
   Widget _buildImageWidget(ImageItem image, bool isDark) {
-    // Try to load thumbnail if available
-    if (image.thumbnail != null) {
-      return Image.memory(
-        image.thumbnail!,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) =>
-            _buildPlaceholder(image, isDark),
-      );
-    }
-
-    // Try to load from file path
-    final file = File(image.path);
-    if (file.existsSync()) {
-      return Image.file(
-        file,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) =>
-            _buildPlaceholder(image, isDark),
-      );
-    }
-
-    // Fallback to placeholder
-    return _buildPlaceholder(image, isDark);
+    return Image.file(
+      File(image.path),
+      fit: BoxFit.cover,
+      cacheWidth: 256,
+      errorBuilder: (_, _, _) => _buildPlaceholder(image, isDark),
+    );
   }
 
   /// Build a placeholder widget for images that can't be loaded
@@ -317,8 +300,8 @@ class ResultsScreen extends StatelessWidget {
             Icon(
               Icons.image_outlined,
               color: isDark
-                  ? Colors.white.withOpacity(0.3)
-                  : Colors.black.withOpacity(0.3),
+                  ? Colors.white.withValues(alpha: 0.3)
+                  : Colors.black.withValues(alpha: 0.3),
               size: 48,
             ),
             const SizedBox(height: 4),
@@ -328,8 +311,8 @@ class ResultsScreen extends StatelessWidget {
                 image.name,
                 style: TextStyle(
                   color: isDark
-                      ? Colors.white.withOpacity(0.4)
-                      : Colors.black.withOpacity(0.4),
+                      ? Colors.white.withValues(alpha: 0.4)
+                      : Colors.black.withValues(alpha: 0.4),
                   fontSize: 10,
                 ),
                 maxLines: 1,
@@ -375,7 +358,7 @@ class ResultsScreen extends StatelessWidget {
           Text(
             'Try a different search query',
             style: TextStyle(
-              color: textColor.withOpacity(0.6),
+              color: textColor.withValues(alpha: 0.6),
               fontSize: 14,
             ),
           ),

@@ -94,6 +94,7 @@ flutter:
     - assets/index/
     - assets/models/
     - assets/models/tokenizer/
+    - assets/models/face/
     - assets/images/
 
   # To add assets to your application, add an assets section, like this:

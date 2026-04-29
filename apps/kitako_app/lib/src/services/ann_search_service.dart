@@ -120,9 +120,11 @@ class ANNSearchService {
     }
 
     // Always recreate with adaptive config sized for current dataset.
+    final adaptiveConfig = _ivfpqConfigFor(count);
     _ivfpqIndex?.dispose();
-    _ivfpqIndex = ann.IvfPqAnnIndex(config: _ivfpqConfigFor(count));
+    _ivfpqIndex = ann.IvfPqAnnIndex(config: adaptiveConfig);
     _ivfpqTrained = false;
+    _activeIvfpqConfig = adaptiveConfig;
 
     debugPrint('ANNSearchService: Training IVF-PQ on $count vectors...');
     final sw = Stopwatch()..start();
@@ -204,6 +206,81 @@ class ANNSearchService {
       numProbes: numClusters,         // probe all clusters → max recall
       trainingIterations: 50,
     );
+  }
+
+  /// Last config used to build the active IVF-PQ index. Driven by
+  /// [_ivfpqConfigFor] unless overridden by the alpha-test retrain flow.
+  ann.IvfPqConfig? _activeIvfpqConfig;
+
+  // ── Alpha-test tuning surface ────────────────────────────────────────────
+
+  /// Adjust HNSW's runtime accuracy/speed knob. No-op if HNSW isn't loaded.
+  /// Higher ef → more accurate but slower per query.
+  void setHnswEfSearch(int ef) {
+    _hnswIndex?.setEfSearch(ef);
+  }
+
+  /// Snapshot of the IVF-PQ config that produced the currently trained index,
+  /// or null if no IVF-PQ index is built. Used by the alpha screen tuner.
+  ann.IvfPqConfig? get activeIvfpqConfig => _activeIvfpqConfig;
+
+  /// Rebuild the IVF-PQ index with caller-provided overrides on top of the
+  /// adaptive defaults. Any null override falls back to [_ivfpqConfigFor]'s
+  /// recommended value for the current dataset size. Re-runs k-means + PQ
+  /// training, so it's the slow path — only call from explicit user action.
+  ///
+  /// Returns true on success, false if there aren't enough vectors yet.
+  Future<bool> retrainIvfpq({
+    int? numClusters,
+    int? numSubquantizers,
+    int? numProbes,
+    int? trainingIterations,
+  }) async {
+    final n = _imageEmbeddings.length;
+    if (n < minVectorsForTraining) {
+      debugPrint(
+        'ANNSearchService: Cannot retrain IVF-PQ — '
+        '$n vectors available, $minVectorsForTraining needed',
+      );
+      return false;
+    }
+
+    final base = _ivfpqConfigFor(n);
+    final clusters = (numClusters ?? base.numClusters).clamp(2, 256);
+    final probes = (numProbes ?? base.numProbes).clamp(1, clusters);
+    final config = ann.IvfPqConfig(
+      dimension: base.dimension,
+      numClusters: clusters,
+      numSubquantizers: numSubquantizers ?? base.numSubquantizers,
+      numCentroidsPerSubquantizer: base.numCentroidsPerSubquantizer,
+      numProbes: probes,
+      trainingIterations: trainingIterations ?? base.trainingIterations,
+    );
+
+    _ivfpqIndex?.dispose();
+    _ivfpqIndex = ann.IvfPqAnnIndex(config: config);
+    _ivfpqTrained = false;
+
+    debugPrint(
+      'ANNSearchService: Retraining IVF-PQ — '
+      'clusters=${config.numClusters} subs=${config.numSubquantizers} '
+      'probes=${config.numProbes} iters=${config.trainingIterations}',
+    );
+
+    try {
+      final vectors = _imageEmbeddings.values.toList();
+      final ids = _imageEmbeddings.keys
+          .map((imageId) => _imageIdToIndexId[imageId]!)
+          .toList();
+      await _ivfpqIndex!.train(vectors);
+      await _ivfpqIndex!.addVectors(vectors, ids);
+      _ivfpqTrained = true;
+      _activeIvfpqConfig = config;
+      return true;
+    } catch (e) {
+      debugPrint('ANNSearchService: IVF-PQ retrain failed: $e');
+      return false;
+    }
   }
 
   // ── Public getters ───────────────────────────────────────────────────────

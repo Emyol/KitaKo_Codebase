@@ -75,6 +75,11 @@ class EmbeddingService {
   /// Current model configuration
   SiglipModelConfig? get modelConfig => _onnxClient?.modelConfig;
 
+  /// Active execution provider for each encoder ('nnapi', 'coreml', 'xnnpack', 'cpu').
+  /// Returns 'cpu' when no ONNX client is active.
+  String get imageEp => _onnxClient?.imageEp ?? 'cpu';
+  String get textEp => _onnxClient?.textEp ?? 'cpu';
+
   /// Whether text embedding is available (requires a real model)
   bool get isTextReady {
     if (_activeBackend == EmbeddingBackend.onnx) {
@@ -308,6 +313,27 @@ class EmbeddingService {
     }
 
     final float32Embedding = await _onnxClient!.embedImage(imageBytes);
+    return float32Embedding.toList();
+  }
+
+  /// Generate embedding from pre-decoded RGBA bytes.
+  ///
+  /// Skips the full-resolution JPEG decode step — use this when the caller
+  /// already holds pixels downscaled via [dart:ui.instantiateImageCodec].
+  Future<List<double>> generateImageEmbeddingFromRgba(
+      Uint8List rgba, int width, int height) async {
+    if (!_isInitialized || _activeBackend != EmbeddingBackend.onnx) {
+      throw StateError(
+        'EmbeddingService not initialized. No ONNX model is loaded.',
+      );
+    }
+
+    if (_onnxClient == null || !_onnxClient!.isImageEncoderReady) {
+      throw StateError('ONNX image encoder not ready.');
+    }
+
+    final float32Embedding =
+        await _onnxClient!.embedImageFromRgba(rgba, width, height);
     return float32Embedding.toList();
   }
 
