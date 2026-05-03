@@ -84,11 +84,11 @@ enum ModelVariant {
   String get displayName {
     switch (this) {
       case ModelVariant.kitakoFp32:
-        return 'Kitako FP32 (FP32+FP32)';
+        return 'Kitako FP32 (fp32 img + fp32 txt)';
       case ModelVariant.kitakoMixed:
-        return 'Kitako Mixed (FP32+INT8)';
+        return 'Kitako Mixed (fp32 img + int8 txt)';
       case ModelVariant.kitakoInt8:
-        return 'Kitako INT8';
+        return 'Kitako INT8 (int8 img + int8 txt)';
       case ModelVariant.siglip2Baseline:
         return 'SigLIP-2 Baseline';
     }

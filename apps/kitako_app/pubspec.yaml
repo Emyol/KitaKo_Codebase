@@ -96,6 +96,7 @@ flutter:
     - assets/models/tokenizer/
     - assets/models/face/
     - assets/images/
+    - assets/bench/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

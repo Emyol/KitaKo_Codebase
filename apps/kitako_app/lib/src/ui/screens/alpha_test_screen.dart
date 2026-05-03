@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kitako_ann/kitako_ann.dart' as ann;
+import '../../bench/bench_screen.dart';
 import '../../models/search_models.dart';
 import '../../services/image_loader_service.dart';
 import '../../services/image_search_service.dart';
@@ -264,6 +265,20 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
       appBar: AppBar(
         title: const Text('Alpha Test'),
         backgroundColor: isDark ? const Color(0xFF1A1A1A) : null,
+        actions: [
+          IconButton(
+            tooltip: 'Caption benchmark',
+            icon: const Icon(Icons.assessment_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      BenchScreen(searchService: widget.searchService),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
