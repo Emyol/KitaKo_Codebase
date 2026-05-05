@@ -26,7 +26,6 @@ class PeopleScreen extends StatefulWidget {
 class _PeopleScreenState extends State<PeopleScreen> {
   List<Person> _persons = [];
   bool _isLoading = true;
-  bool _indexingRequested = false;
   FaceServiceStatus _faceStatus = FaceServiceStatus.uninitialized;
   FaceIndexingState _indexingState = const FaceIndexingState();
 
@@ -59,11 +58,6 @@ class _PeopleScreenState extends State<PeopleScreen> {
     _statusSub?.cancel();
     _indexingSub?.cancel();
     super.dispose();
-  }
-
-  Future<void> _startFaceIndexing() async {
-    setState(() => _indexingRequested = true);
-    await widget.searchService.startFaceIndexing();
   }
 
   void _loadPersons() {
@@ -233,54 +227,6 @@ class _PeopleScreenState extends State<PeopleScreen> {
     }
 
     if (_persons.isEmpty) {
-      // Indexing ran but found nothing.
-      if (_indexingRequested) {
-        return Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.people_outline,
-                    size: 64,
-                    color: isDark ? Colors.white38 : Colors.black38),
-                const SizedBox(height: 16),
-                Text(
-                  'No People Found',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white70 : Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'No faces were detected in your gallery.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: isDark ? Colors.white54 : Colors.black54),
-                ),
-                const SizedBox(height: 20),
-                OutlinedButton.icon(
-                  onPressed: _startFaceIndexing,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Scan Again'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor:
-                        isDark ? Colors.white70 : Colors.black87,
-                    side: BorderSide(
-                        color: isDark
-                            ? Colors.white24
-                            : Colors.black26),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }
-
-      // Indexing has never been run — show the prompt button.
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -308,7 +254,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
-                onPressed: _startFaceIndexing,
+                onPressed: null,
                 icon: const Icon(Icons.search),
                 label: const Text('Find Faces'),
               ),

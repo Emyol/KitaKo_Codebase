@@ -197,13 +197,12 @@ class ANNSearchService {
   /// Example for 751 images: 75 centroids, 27 clusters → ~10 pts/centroid ✓
   static ann.IvfPqConfig _ivfpqConfigFor(int n) {
     final numCentroids = (n / 10).floor().clamp(8, 256);
-    final numClusters = math.sqrt(n).round().clamp(2, 256);
     return ann.IvfPqConfig(
       dimension: 768,
-      numClusters: numClusters,
+      numClusters: 256,
       numSubquantizers: 64,           // 768 / 64 = 12 dims per subquantizer
       numCentroidsPerSubquantizer: numCentroids,
-      numProbes: numClusters,         // probe all clusters → max recall
+      numProbes: 256,
       trainingIterations: 50,
     );
   }

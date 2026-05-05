@@ -26,10 +26,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// false = Performance (IVF-PQ), true = Accuracy (HNSW)
   late bool _useAccuracyMode;
 
-  /// Variants exposed to the dev-mode switcher (scope: first two sets only).
   static const List<ModelVariant> _devVariants = [
     ModelVariant.kitakoFp32,
     ModelVariant.kitakoMixed,
+    ModelVariant.kitakoInt8,
   ];
 
   @override
@@ -141,7 +141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   (v) => Expanded(
                     child: Padding(
                       padding: EdgeInsets.only(
-                        right: v == _devVariants.last ? 0 : 12,
+                        right: v == _devVariants.last ? 0 : 8,
                       ),
                       child: _buildVariantButton(
                         variant: v,
@@ -171,14 +171,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     const selectedFg = Colors.white;
     final unselectedFg = isDark ? Colors.white70 : Colors.black87;
 
-    // Short label derived from the variant.
-    final short = variant == ModelVariant.kitakoFp32 ? 'FP32+FP32' : 'FP32+INT8';
+    final (short, subtitle, icon) = switch (variant) {
+      ModelVariant.kitakoFp32  => ('FP32', 'fp32 full',         Icons.high_quality),
+      ModelVariant.kitakoMixed => ('Hybrid', 'fp32im + int8tex', Icons.balance),
+      ModelVariant.kitakoInt8  => ('INT8', 'int8 full',          Icons.speed),
+      _                        => (variant.displayName, '', Icons.memory),
+    };
 
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
         decoration: BoxDecoration(
           color: selected ? selectedBg : unselectedBg,
           borderRadius: BorderRadius.circular(10),
@@ -194,9 +198,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           children: [
             Icon(
-              variant == ModelVariant.kitakoFp32
-                  ? Icons.high_quality
-                  : Icons.balance,
+              icon,
               color: selected ? selectedFg : unselectedFg,
               size: 24,
             ),
@@ -211,7 +213,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 2),
             Text(
-              variant.displayName,
+              subtitle,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: selected
