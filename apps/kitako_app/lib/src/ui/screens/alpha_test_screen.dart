@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kitako_ann/kitako_ann.dart' as ann;
 import '../../models/search_models.dart';
-import '../../services/image_loader_service.dart';
 import '../../services/image_search_service.dart';
 import '../../services/embedding_service.dart';
 
@@ -39,7 +38,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   bool _searching = false;
   bool _switchingModel = false;
   bool _runningRecall = false;
-  bool _switchingDataset = false;
   bool _retrainingIvfpq = false;
   bool _headerVisible = true;
 
@@ -111,35 +109,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // ── Dataset switch ───────────────────────────────────────────────────────
-
-  Future<void> _switchDataset(TestDataset dataset) async {
-    if (_switchingDataset) return;
-    setState(() => _switchingDataset = true);
-    try {
-      final ok = await widget.searchService.setActiveDataset(dataset.dirName);
-      if (mounted) {
-        if (!ok) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${dataset.label} dataset not found on disk — '
-                'see docs/development/TEST_DATASETS.md',
-              ),
-            ),
-          );
-        } else {
-          // Re-run last query against the new active dataset, if any.
-          if (_queryController.text.trim().isNotEmpty &&
-              _lastState.status == SearchStatus.success) {
-            _runQuery();
-          }
-        }
-      }
-    } finally {
-      if (mounted) setState(() => _switchingDataset = false);
-    }
-  }
 
   // ── Model switch ─────────────────────────────────────────────────────────
 
@@ -366,38 +335,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                     isDark: isDark,
                   ),
                 ],
-                const SizedBox(height: 8),
-                // Dataset toggle row
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 60,
-                      child: Text(
-                        'Dataset',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white70 : Colors.black54,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: _switchingDataset
-                          ? const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4),
-                              child: LinearProgressIndicator(),
-                            )
-                          : _DatasetToggle(
-                              activeDirName:
-                                  widget.searchService.activeDataset,
-                              available:
-                                  widget.searchService.availableDatasets,
-                              onChanged: _switchDataset,
-                              isDark: isDark,
-                            ),
-                    ),
-                  ],
-                ),
                 const SizedBox(height: 6),
                 // Model + index status
                 Row(
@@ -1203,65 +1140,6 @@ class _StatusChip extends StatelessWidget {
           color: color,
           fontWeight: FontWeight.bold,
         ),
-      ),
-    );
-  }
-}
-
-/// Compact dataset selector for the alpha screen. Renders a `SegmentedButton`
-/// over the two known test datasets; missing-on-disk datasets render disabled.
-class _DatasetToggle extends StatelessWidget {
-  final String? activeDirName;
-  final Set<String> available;
-  final ValueChanged<TestDataset> onChanged;
-  final bool isDark;
-
-  const _DatasetToggle({
-    required this.activeDirName,
-    required this.available,
-    required this.onChanged,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (TestDataset.all.every((d) => !available.contains(d.dirName))) {
-      return Text(
-        'No test datasets found',
-        style: TextStyle(
-          fontSize: 12,
-          fontStyle: FontStyle.italic,
-          color: isDark ? Colors.white54 : Colors.black45,
-        ),
-      );
-    }
-
-    final selected = <TestDataset>{
-      for (final d in TestDataset.all)
-        if (d.dirName == activeDirName) d,
-    };
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: SegmentedButton<TestDataset>(
-        showSelectedIcon: false,
-        style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
-          textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
-        ),
-        segments: TestDataset.all.map((d) {
-          final present = available.contains(d.dirName);
-          return ButtonSegment<TestDataset>(
-            value: d,
-            label: Text(present ? d.label : '${d.label} (missing)'),
-            enabled: present,
-          );
-        }).toList(),
-        selected: selected,
-        emptySelectionAllowed: true,
-        onSelectionChanged: (sel) {
-          if (sel.isNotEmpty) onChanged(sel.first);
-        },
       ),
     );
   }

@@ -364,7 +364,7 @@ class FaceAligner {
 
   /// Convert image to NCHW Float32 with ArcFace normalization.
   ///
-  /// Normalization: (pixel / 255.0 - 0.5) / 0.5 = pixel / 127.5 - 1.0
+  /// InsightFace standard: (pixel - 127.5) / 128.0
   static Float32List _toNchwFloat32(img.Image image) {
     final w = image.width;
     final h = image.height;
@@ -374,9 +374,9 @@ class FaceAligner {
       for (int x = 0; x < w; x++) {
         final pixel = image.getPixel(x, y);
         final idx = y * w + x;
-        data[0 * h * w + idx] = pixel.r.toDouble() / 127.5 - 1.0; // R
-        data[1 * h * w + idx] = pixel.g.toDouble() / 127.5 - 1.0; // G
-        data[2 * h * w + idx] = pixel.b.toDouble() / 127.5 - 1.0; // B
+        data[0 * h * w + idx] = (pixel.r.toDouble() - 127.5) / 128.0; // R
+        data[1 * h * w + idx] = (pixel.g.toDouble() - 127.5) / 128.0; // G
+        data[2 * h * w + idx] = (pixel.b.toDouble() - 127.5) / 128.0; // B
       }
     }
 

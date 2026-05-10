@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:kitako_normalizer/kitako_normalizer.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/search_models.dart';
 import 'image_loader_service.dart';
 import 'embedding_service.dart';
@@ -196,7 +197,10 @@ class ImageSearchService {
 
     debugPrint('ImageSearchService: Starting face indexing for ${images.length} images');
 
-    const batchSize = 10;
+    // Reset any previously cached data so re-indexing starts clean
+    face.clearAllData();
+
+    const batchSize = 30;
     for (int i = 0; i < images.length; i += batchSize) {
       final batch = images.sublist(i, (i + batchSize).clamp(0, images.length));
       final entries = <MapEntry<String, Uint8List>>[];
@@ -219,7 +223,7 @@ class ImageSearchService {
       );
     }
 
-    face.finalizeClustering();
+    await face.finalizeClustering();
     debugPrint(
       'ImageSearchService: Face indexing complete — '
       '${face.faceCount} faces, ${face.personCount} persons',
@@ -275,31 +279,6 @@ class ImageSearchService {
       numProbes: numProbes,
       trainingIterations: trainingIterations,
     );
-  }
-
-  // ========== Active Dataset (Test Set Toggle) ==========
-
-  /// Currently active test dataset (e.g. `personal_1k`), or null if none.
-  String? get activeDataset => _imageLoader.activeDataset;
-
-  /// Datasets discovered on disk during loader init.
-  Set<String> get availableDatasets => _imageLoader.availableDatasets;
-
-  /// Switch which test set is searched. The other set's embeddings stay
-  /// in the index and cache — switching is just a results filter.
-  Future<bool> setActiveDataset(String dirName) {
-    return _imageLoader.setActiveDataset(dirName);
-  }
-
-  /// Filter ANN results to the currently active dataset. Returns the input
-  /// unchanged if no dataset is active.
-  List<SearchResultWithScore> _filterByActiveDataset(
-    List<SearchResultWithScore> results,
-  ) {
-    if (_imageLoader.activeDataset == null) return results;
-    return results
-        .where((r) => _imageLoader.isInActiveDataset(r.image.id))
-        .toList(growable: false);
   }
 
   /// Set the preferred search algorithm shown in Settings.
@@ -500,6 +479,16 @@ class ImageSearchService {
       return;
     }
 
+    // Explicit "person:<name>" prefix → face label search.
+    final trimmed = query.trim();
+    if (trimmed.toLowerCase().startsWith('person:')) {
+      final label = trimmed.substring(7).trim();
+      if (label.isNotEmpty) {
+        await searchByPerson(label);
+        return;
+      }
+    }
+
     final k = topK ?? this.topK;
 
     // Normalize the query using TaglishNormalizer
@@ -513,6 +502,16 @@ class ImageSearchService {
         query: query,
         normalizedQuery: normalizedQuery,
       ));
+
+      // If a known person label appears in the query, narrow candidates to
+      // that person's images and re-rank them with the full SigLIP-2 query.
+      final matchedLabel = _findPersonLabelInQuery(query);
+      if (matchedLabel != null) {
+        await _searchPersonWithSemantics(
+          matchedLabel, query, normalizedQuery, k,
+        );
+        return;
+      }
 
       debugPrint('ImageSearchService: Searching for "$query"...');
       final stopwatch = Stopwatch()..start();
@@ -533,8 +532,8 @@ class ImageSearchService {
       );
       searchSw.stop();
 
-      // Step 3: Filter to active dataset, take top-k, then apply combo filter.
-      final scoped = _filterByActiveDataset(raw).take(k).toList();
+      // Step 3: Take top-k, then apply combo filter.
+      final scoped = raw.take(k).toList();
       final filtered = _applyComboFilter(scoped);
 
       // Step 4: Collect results (thumbnails are loaded lazily by the grid).
@@ -704,8 +703,8 @@ class ImageSearchService {
         threshold: -1.0,
       );
 
-      // Step 3: Filter to active dataset, take top-k, then apply combo filter.
-      final scoped = _filterByActiveDataset(raw).take(k).toList();
+      // Step 3: Take top-k, then apply combo filter.
+      final scoped = raw.take(k).toList();
       final filtered = _applyComboFilter(scoped, isImageSearch: true);
 
       // Step 4: Collect results (thumbnails are loaded lazily by the grid).
@@ -912,6 +911,100 @@ class ImageSearchService {
     return filtered;
   }
 
+  /// Return the first known person label that appears as a whole word in [query],
+  /// or null if none match.
+  String? _findPersonLabelInQuery(String query) {
+    final face = _faceService;
+    if (face == null || !face.isAvailable) return null;
+    final queryLower = query.toLowerCase();
+    for (final person in face.allPersons) {
+      final label = person.label;
+      if (label == null || label.isEmpty) continue;
+      final escaped = RegExp.escape(label.toLowerCase());
+      if (RegExp('(^|\\s)$escaped(\$|\\s)').hasMatch(queryLower)) return label;
+    }
+    return null;
+  }
+
+  /// Narrow candidates to [personLabel]'s images, then re-rank with the full
+  /// SigLIP-2 text embedding of [normalizedQuery].
+  Future<void> _searchPersonWithSemantics(
+    String personLabel,
+    String query,
+    String normalizedQuery,
+    int k,
+  ) async {
+    final face = _faceService!;
+    final candidateIds = face.searchByPersonLabel(personLabel).toSet();
+    if (candidateIds.isEmpty) return;
+
+    // If embeddings aren't indexed yet for these images, return unranked.
+    final embSw = Stopwatch()..start();
+    List<SearchResultWithScore> scored;
+    try {
+      final queryEmbedding =
+          await _embeddingService.generateEmbedding(normalizedQuery);
+      embSw.stop();
+      scored = _annSearch.searchSubset(queryEmbedding, candidateIds, k: k);
+    } catch (e) {
+      embSw.stop();
+      debugPrint('ImageSearchService: Person semantic re-rank failed: $e');
+      // Fallback: return all candidate images unranked.
+      final images = candidateIds
+          .map(getImageById)
+          .whereType<ImageItem>()
+          .toList();
+      _updateState(SearchState(
+        status: images.isEmpty ? SearchStatus.noResults : SearchStatus.success,
+        query: query,
+        normalizedQuery: normalizedQuery,
+        result: SearchResult(
+          images: images,
+          scores: List.filled(images.length, 1.0),
+          query: query,
+        ),
+      ));
+      return;
+    }
+
+    // If no stored embeddings for these images, fall back to unranked.
+    if (scored.isEmpty) {
+      final images = candidateIds
+          .map(getImageById)
+          .whereType<ImageItem>()
+          .toList();
+      _updateState(SearchState(
+        status: images.isEmpty ? SearchStatus.noResults : SearchStatus.success,
+        query: query,
+        normalizedQuery: normalizedQuery,
+        result: SearchResult(
+          images: images,
+          scores: List.filled(images.length, 1.0),
+          query: query,
+        ),
+      ));
+      return;
+    }
+
+    final images = scored.map((r) => r.image).toList();
+    final scores = scored.map((r) => r.similarity).toList();
+    debugPrint(
+      'ImageSearchService: Person "$personLabel" — '
+      '${candidateIds.length} candidates → ${scored.length} ranked',
+    );
+    _updateState(SearchState(
+      status: SearchStatus.success,
+      query: query,
+      normalizedQuery: normalizedQuery,
+      result: SearchResult(
+        images: images,
+        scores: scores,
+        query: query,
+        embeddingTimeMs: embSw.elapsedMilliseconds,
+      ),
+    ));
+  }
+
   /// Update search state and notify listeners
   void _updateState(SearchState newState) {
     _currentState = newState;
@@ -947,13 +1040,7 @@ class ImageSearchService {
         );
       }
 
-      // Only embed personal images for now — scraped test images are excluded
-      // from the indexing pipeline to avoid burning embedding time on them.
-      // Search-time filtering by active dataset still works for both sets.
-      final scrapedPrefix = TestDataset.scraped.idPrefix();
-      final imagesToProcess = allImages
-          .where((img) => !img.id.startsWith(scrapedPrefix))
-          .toList();
+      final imagesToProcess = allImages.toList();
 
       // ── Step 1: Try loading cached embeddings from storage layer ──
       final visionEncoderId =
@@ -1018,11 +1105,16 @@ class ImageSearchService {
       }
 
       // ── Step 3: Embed only new images ──
+      // Acquire a partial wakelock so the CPU stays at full speed even when
+      // the user backgrounds the app or the screen turns off.
+      try { await WakelockPlus.enable(); } catch (_) {}
+
       final stopwatch = Stopwatch()..start();
       final newlyIndexed = <ImageItem>[];
       final newEmbeddings = <List<double>>[];
       int successCount = 0;
       int failedCount = 0;
+      int lastCheckpointCount = 0;
 
       // Concurrency is bounded by per-isolate decode memory, NOT by ONNX
       // throughput. A 4032×3024 phone JPEG decodes to a ~48 MB RGBA buffer
@@ -1105,6 +1197,15 @@ class ImageSearchService {
           done: batchEnd,
           total: total,
         );
+
+        // Checkpoint: save every 100 newly embedded images so a background
+        // kill or crash doesn't lose all progress.
+        if (successCount - lastCheckpointCount >= 100) {
+          lastCheckpointCount = successCount;
+          await _annSearch.indexBatch(newlyIndexed, newEmbeddings);
+          await _saveEmbeddingCache();
+          debugPrint('ImageSearchService: Checkpoint saved at $successCount images');
+        }
       }
 
       // If some images failed, pause and let the user decide whether to retry
@@ -1172,6 +1273,8 @@ class ImageSearchService {
     } catch (e) {
       debugPrint('ImageSearchService: Failed to index images: $e');
       rethrow;
+    } finally {
+      try { await WakelockPlus.disable(); } catch (_) {}
     }
   }
 

@@ -103,7 +103,7 @@ class OnnxFaceDetector {
   List<FaceDetection> detectFaces(
     Uint8List imageBytes, {
     double confidenceThreshold = kFaceDetectionConfidenceThreshold,
-    double nmsThreshold = 0.4,
+    double nmsThreshold = 0.45,
   }) {
     if (!_isReady || _session == null) {
       debugPrint('OnnxFaceDetector: Not ready, returning empty results');
@@ -134,7 +134,7 @@ class OnnxFaceDetector {
   List<FaceDetection> detectFacesFromImage(
     img.Image image, {
     double confidenceThreshold = kFaceDetectionConfidenceThreshold,
-    double nmsThreshold = 0.4,
+    double nmsThreshold = 0.45,
   }) {
     if (!_isReady || _session == null) {
       debugPrint('OnnxFaceDetector: Not ready, returning empty results');
@@ -295,9 +295,13 @@ class OnnxFaceDetector {
         }
       }
 
-      // If we couldn't identify outputs by name, try positional grouping
-      // Standard SCRFD: 9 outputs = 3 scores + 3 boxes + 3 keypoints
-      if (scores.isEmpty && outputs.length >= 9) {
+      // If we couldn't identify all groups by name, fall back to positional.
+      // Standard SCRFD: 9 outputs = 3 scores + 3 boxes + 3 keypoints.
+      // Trigger when scores OR boxes are empty to handle partial name-match.
+      if ((scores.isEmpty || boxes.isEmpty) && outputs.length >= 9) {
+        scores.clear();
+        boxes.clear();
+        keypoints.clear();
         for (int i = 0; i < 3; i++) {
           if (outputs[i]?.value != null) {
             scores.add(outputs[i]!.value as List<dynamic>);
@@ -315,7 +319,7 @@ class OnnxFaceDetector {
         }
       }
 
-      // One-time debug: log output shapes to verify grouping
+      // One-time debug: log output shapes and per-scale max scores
       if (!_loggedOutputShapes) {
         _loggedOutputShapes = true;
         for (int i = 0; i < outputs.length; i++) {
@@ -324,11 +328,22 @@ class OnnxFaceDetector {
             debugPrint('OnnxFaceDetector: output[$i] name=${outputNames[i]} flatSize=${flat.length}');
           }
         }
+        final diagStrides = <int>[8, 16, 32];
         for (int i = 0; i < scores.length; i++) {
-          debugPrint('OnnxFaceDetector: scores[$i] flatSize=${_flattenToDoubles(scores[i]).length}');
+          final flatS = _flattenToDoubles(scores[i]);
+          final maxScore = flatS.isEmpty ? 0.0 : flatS.reduce((a, b) => a > b ? a : b);
+          final maxSigmoid = maxScore > 1.0 || maxScore < 0.0
+              ? 1.0 / (1.0 + math.exp(-maxScore))
+              : maxScore;
+          final stride = i < diagStrides.length ? diagStrides[i] : i;
+          debugPrint('OnnxFaceDetector: scores[$i] stride=$stride '
+              'flatSize=${flatS.length} '
+              'maxRaw=${maxScore.toStringAsFixed(4)} '
+              'maxSigmoid=${maxSigmoid.toStringAsFixed(4)}');
         }
         for (int i = 0; i < boxes.length; i++) {
-          debugPrint('OnnxFaceDetector: boxes[$i] flatSize=${_flattenToDoubles(boxes[i]).length}');
+          final flatB = _flattenToDoubles(boxes[i]);
+          debugPrint('OnnxFaceDetector: boxes[$i] flatSize=${flatB.length}');
         }
       }
 
@@ -417,6 +432,16 @@ class OnnxFaceDetector {
           y2.clamp(0.0, double.infinity),
         );
 
+        // Reject non-face detections: too small or wrong aspect ratio.
+        // 10 px in model-input space to capture small faces in group shots.
+        // 2.5:1 aspect-ratio cap removes text banners, logos, thin strips.
+        final bboxWModel = bbox.width / invRatio;
+        final bboxHModel = bbox.height / invRatio;
+        if (bboxWModel < 10.0 || bboxHModel < 10.0) continue;
+        if (bboxHModel > 0 &&
+            (bboxWModel / bboxHModel > 2.5 ||
+                bboxHModel / bboxWModel > 2.5)) continue;
+
         // Decode landmarks
         final landmarks = <Offset>[];
         if (flatKps != null) {
@@ -430,6 +455,23 @@ class OnnxFaceDetector {
               landmarks.add(Offset(lx, ly));
             }
           }
+        }
+
+        // Geometry check with 35% slack — tolerates tilted/angled faces
+        // while rejecting completely wrong landmark layouts (cartoons, logos).
+        if (landmarks.length == 5) {
+          final leftEye = landmarks[0];
+          final rightEye = landmarks[1];
+          final nose = landmarks[2];
+          final leftMouth = landmarks[3];
+          final rightMouth = landmarks[4];
+          final slack = bbox.height * 0.35;
+          final eyeMidY = (leftEye.dy + rightEye.dy) / 2;
+          if (nose.dy < eyeMidY - slack) continue;
+          if (leftMouth.dy < nose.dy - slack) continue;
+          if (rightMouth.dy < nose.dy - slack) continue;
+          final eyeDist = (rightEye.dx - leftEye.dx).abs();
+          if (eyeDist < bbox.width * 0.08) continue;
         }
 
         detections.add(FaceDetection(

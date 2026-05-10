@@ -883,6 +883,28 @@ class ANNSearchService {
     return allResults.take(k).toList();
   }
 
+  /// Score a query embedding against a specific subset of image IDs.
+  ///
+  /// Used for person-filtered semantic search: narrow candidates by face label,
+  /// then re-rank only those candidates using the SigLIP-2 text embedding.
+  /// Returns up to [k] results sorted by similarity descending.
+  List<SearchResultWithScore> searchSubset(
+    List<double> queryEmbedding,
+    Set<String> imageIds, {
+    int k = 20,
+  }) {
+    final results = <SearchResultWithScore>[];
+    for (final id in imageIds) {
+      final emb = _imageEmbeddings[id];
+      final meta = _imageMetadata[id];
+      if (emb == null || meta == null) continue;
+      final sim = _cosineSimilarity(queryEmbedding, emb);
+      results.add(SearchResultWithScore(image: meta, similarity: sim));
+    }
+    results.sort((a, b) => b.similarity.compareTo(a.similarity));
+    return results.take(k).toList();
+  }
+
   void _logTop5(String label, List<SearchResultWithScore> results) {
     debugPrint('ANNSearchService: $label top results:');
     for (var i = 0; i < results.length && i < 5; i++) {

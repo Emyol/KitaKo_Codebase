@@ -7,6 +7,51 @@ import 'package:kitako_core/kitako_core.dart';
 import 'package:kitako_embedding/kitako_embedding.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// Top-level function run inside a background isolate via [compute].
+///
+/// Loads face models fresh in the isolate (ONNX sessions cannot cross
+/// isolate boundaries), processes a batch of images, and returns
+/// serializable face detection results.
+Future<List<Map<String, dynamic>>> _runFaceBatchInIsolate(
+  Map<String, dynamic> params,
+) async {
+  final detectorPath = params['detectorPath'] as String;
+  final embedderPath = params['embedderPath'] as String;
+  final images = params['images'] as List<dynamic>;
+
+  final pipeline = FacePipeline();
+  try {
+    final ready = await pipeline.initialize(
+      detectorModelPath: detectorPath,
+      embedderModelPath: embedderPath,
+    );
+    if (!ready) return const [];
+
+    final results = <Map<String, dynamic>>[];
+    for (final imgEntry in images) {
+      final imgMap = imgEntry as Map<String, dynamic>;
+      final imageId = imgMap['id'] as String;
+      final bytes = imgMap['bytes'] as Uint8List;
+      try {
+        final faceResults = pipeline.processImage(bytes);
+        for (final r in faceResults) {
+          final bb = r.detection.boundingBox;
+          results.add(<String, dynamic>{
+            'imageId': imageId,
+            'bbox': <double>[bb.left, bb.top, bb.width, bb.height],
+            'confidence': r.detection.confidence,
+            'embedding': r.embedding,
+            'thumbnail': r.thumbnail,
+          });
+        }
+      } catch (_) {}
+    }
+    return results;
+  } finally {
+    pipeline.dispose();
+  }
+}
+
 /// Status of the face recognition subsystem.
 enum FaceServiceStatus {
   /// Not yet initialized
@@ -78,6 +123,10 @@ class FaceService {
 
   FaceServiceStatus _status = FaceServiceStatus.uninitialized;
 
+  // Stored so the background isolate can load its own sessions from the same paths
+  String? _detectorPath;
+  String? _embedderPath;
+
   final Map<String, FaceRecord> _faceRecords = {};
   final Map<int, Person> _persons = {};
   final Map<String, List<String>> _imageFaces = {};
@@ -121,6 +170,8 @@ class FaceService {
     required String detectorModelPath,
     required String embedderModelPath,
   }) async {
+    _detectorPath = detectorModelPath;
+    _embedderPath = embedderModelPath;
     _setStatus(FaceServiceStatus.initializing);
 
     try {
@@ -325,48 +376,65 @@ class FaceService {
   }
 
   /// Process a batch without clustering (call [finalizeClustering] after all batches).
+  ///
+  /// Runs ONNX inference in a background isolate so the UI thread stays
+  /// responsive. Models are loaded fresh inside the isolate each call —
+  /// use a reasonable batch size (≥20) to amortize that overhead.
   Future<void> indexImageBatch(
     List<MapEntry<String, Uint8List>> imageEntries,
   ) async {
     if (!isAvailable) return;
+    final detectorPath = _detectorPath;
+    final embedderPath = _embedderPath;
+    if (detectorPath == null || embedderPath == null) return;
 
     _setStatus(FaceServiceStatus.indexing);
 
-    for (final entry in imageEntries) {
-      try {
-        final results = _pipeline.processImage(entry.value);
+    final params = <String, dynamic>{
+      'detectorPath': detectorPath,
+      'embedderPath': embedderPath,
+      'images': imageEntries
+          .map((e) => <String, dynamic>{'id': e.key, 'bytes': e.value})
+          .toList(),
+    };
 
-        for (final result in results) {
-          final faceId = _generateFaceId();
-          final record = FaceRecord(
-            faceId: faceId,
-            imageId: entry.key,
-            boundingBox: result.detection.boundingBox,
-            embedding: result.embedding,
-            confidence: result.detection.confidence,
-            faceThumbnail: result.thumbnail,
-          );
+    try {
+      final batchResults = await compute(_runFaceBatchInIsolate, params);
 
-          _faceRecords[faceId] = record;
-          _imageFaces.putIfAbsent(entry.key, () => []).add(faceId);
-        }
-      } catch (e) {
-        // Per-image failure: skip and continue
+      for (final result in batchResults) {
+        final faceId = _generateFaceId();
+        final imageId = result['imageId'] as String;
+        final bboxList = result['bbox'] as List<dynamic>;
+        final bbox = Rect.fromLTWH(
+          (bboxList[0] as num).toDouble(),
+          (bboxList[1] as num).toDouble(),
+          (bboxList[2] as num).toDouble(),
+          (bboxList[3] as num).toDouble(),
+        );
+        _faceRecords[faceId] = FaceRecord(
+          faceId: faceId,
+          imageId: imageId,
+          boundingBox: bbox,
+          embedding: result['embedding'] as Float32List,
+          confidence: (result['confidence'] as num).toDouble(),
+          faceThumbnail: result['thumbnail'] as Uint8List?,
+        );
+        _imageFaces.putIfAbsent(imageId, () => []).add(faceId);
       }
-
-      await Future<void>.delayed(Duration.zero);
+    } catch (e) {
+      debugPrint('FaceService: Batch isolate failed: $e');
     }
   }
 
   /// Run clustering + persistence after all batches are indexed.
-  void finalizeClustering() {
+  Future<void> finalizeClustering() async {
     if (_faceRecords.isEmpty) {
       _setStatus(FaceServiceStatus.ready);
       return;
     }
 
     _runClustering();
-    _persistData();
+    await _persistData();
     _setStatus(FaceServiceStatus.ready);
 
     debugPrint('FaceService: Finalized — '
@@ -638,12 +706,14 @@ class FaceService {
         }
       }
 
-      // Singleton Person entries for noise faces (unclustered) so they
-      // still appear in the People tab.
+      // Singleton Person entries for unclustered faces that have sufficiently
+      // high detection confidence. Low-confidence isolates are almost always
+      // false positives (posters, stickers, cartoon art) — skip them.
       int noisePersonId = 10000;
       for (final faceId in result.noise) {
         final record = _faceRecords[faceId];
         if (record == null) continue;
+        if (record.confidence < 0.50 && !record.isLabeled) continue;
 
         _persons[noisePersonId] = Person(
           personId: noisePersonId,
@@ -685,17 +755,9 @@ class FaceService {
       final dir = await _persistPath;
       await Directory(dir).create(recursive: true);
 
-      final labels = <String, dynamic>{};
-      for (final person in _persons.values) {
-        if (person.isLabeled) {
-          labels[person.personId.toString()] = person.label;
-        }
-      }
-      await File('$dir/person_labels.json').writeAsString(jsonEncode(labels));
-
       final faceMap = <String, Map<String, dynamic>>{};
       for (final record in _faceRecords.values) {
-        faceMap[record.faceId] = {
+        final entry = <String, dynamic>{
           'imageId': record.imageId,
           'clusterId': record.clusterId,
           'personLabel': record.personLabel,
@@ -706,9 +768,22 @@ class FaceService {
             record.boundingBox.width,
             record.boundingBox.height,
           ],
+          'embedding': record.embedding.toList(),
         };
+        if (record.faceThumbnail != null) {
+          entry['thumbnail'] = base64Encode(record.faceThumbnail!);
+        }
+        faceMap[record.faceId] = entry;
       }
       await File('$dir/face_records.json').writeAsString(jsonEncode(faceMap));
+
+      final labels = <String, dynamic>{};
+      for (final person in _persons.values) {
+        if (person.isLabeled) {
+          labels[person.personId.toString()] = person.label;
+        }
+      }
+      await File('$dir/person_labels.json').writeAsString(jsonEncode(labels));
 
       debugPrint('FaceService: Data persisted (${_faceRecords.length} faces, '
           '${labels.length} labels)');
@@ -720,15 +795,108 @@ class FaceService {
   Future<void> _loadPersistedData() async {
     try {
       final dir = await _persistPath;
-      final labelsFile = File('$dir/person_labels.json');
+      final recordsFile = File('$dir/face_records.json');
+      if (!await recordsFile.exists()) return;
 
-      if (await labelsFile.exists()) {
-        final content = await labelsFile.readAsString();
-        final labels = jsonDecode(content) as Map<String, dynamic>;
-        debugPrint('FaceService: Loaded ${labels.length} persisted labels');
+      final faceMap =
+          jsonDecode(await recordsFile.readAsString()) as Map<String, dynamic>;
+      if (faceMap.isEmpty) return;
+
+      int maxIdNum = 0;
+      final clusterToFaces = <int, List<String>>{};
+
+      for (final entry in faceMap.entries) {
+        final faceId = entry.key;
+        final data = entry.value as Map<String, dynamic>;
+
+        // Embedding is required — skip records without it (legacy format)
+        final embeddingData = data['embedding'] as List<dynamic>?;
+        if (embeddingData == null) continue;
+        final embedding = Float32List.fromList(
+            embeddingData.map((e) => (e as num).toDouble()).toList());
+
+        final bboxData = data['bbox'] as List<dynamic>;
+        final bbox = Rect.fromLTWH(
+          (bboxData[0] as num).toDouble(),
+          (bboxData[1] as num).toDouble(),
+          (bboxData[2] as num).toDouble(),
+          (bboxData[3] as num).toDouble(),
+        );
+
+        final clusterId = (data['clusterId'] as num?)?.toInt();
+        final personLabel = data['personLabel'] as String?;
+        Uint8List? thumbnail;
+        if (data['thumbnail'] is String) {
+          try {
+            thumbnail = base64Decode(data['thumbnail'] as String);
+          } catch (_) {}
+        }
+
+        final record = FaceRecord(
+          faceId: faceId,
+          imageId: data['imageId'] as String,
+          boundingBox: bbox,
+          embedding: embedding,
+          confidence: (data['confidence'] as num).toDouble(),
+          clusterId: clusterId,
+          personLabel: personLabel,
+          faceThumbnail: thumbnail,
+        );
+
+        _faceRecords[faceId] = record;
+        _imageFaces.putIfAbsent(record.imageId, () => []).add(faceId);
+
+        if (clusterId != null) {
+          clusterToFaces.putIfAbsent(clusterId, () => []).add(faceId);
+        }
+
+        final idNum = int.tryParse(faceId.replaceFirst('face_', ''));
+        if (idNum != null && idNum > maxIdNum) maxIdNum = idNum;
       }
+
+      _faceIdCounter = maxIdNum;
+
+      // Rebuild Person entries from loaded cluster assignments
+      for (final clusterEntry in clusterToFaces.entries) {
+        final clusterId = clusterEntry.key;
+        final faceIds = clusterEntry.value;
+
+        final embeddings = faceIds
+            .map((id) => _faceRecords[id]?.embedding)
+            .whereType<Float32List>()
+            .toList();
+        final centroid = FaceDbscan.computeCentroid(embeddings);
+
+        Uint8List? bestThumbnail;
+        String? label;
+        double bestConf = 0;
+        for (final faceId in faceIds) {
+          final r = _faceRecords[faceId];
+          if (r == null) continue;
+          if (r.personLabel != null) label = r.personLabel;
+          if (r.faceThumbnail != null && r.confidence > bestConf) {
+            bestConf = r.confidence;
+            bestThumbnail = r.faceThumbnail;
+          }
+        }
+
+        _persons[clusterId] = Person(
+          personId: clusterId,
+          label: label,
+          centroidEmbedding: centroid,
+          faceIds: faceIds,
+          representativeThumbnail: bestThumbnail,
+        );
+      }
+
+      debugPrint('FaceService: Restored ${_faceRecords.length} faces, '
+          '${_persons.length} persons from cache');
     } catch (e) {
       debugPrint('FaceService: Failed to load persisted data: $e');
+      // Reset to clean state so a fresh index can be triggered
+      _faceRecords.clear();
+      _persons.clear();
+      _imageFaces.clear();
     }
   }
 }

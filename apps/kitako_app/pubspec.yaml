@@ -60,6 +60,9 @@ dependencies:
   # ONNX Runtime for ML inference
   onnxruntime_v2: ^1.23.2
 
+  # Keep CPU awake during background indexing
+  wakelock_plus: ^1.2.8
+
   # Key-value persistence (theme preference, etc.)
   shared_preferences: ^2.3.0
 

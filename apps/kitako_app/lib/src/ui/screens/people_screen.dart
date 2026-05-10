@@ -137,12 +137,19 @@ class _PeopleScreenState extends State<PeopleScreen> {
       appBar: AppBar(
         title: const Text('People'),
         actions: [
-          if (_faceStatus == FaceServiceStatus.ready)
+          if (_faceStatus == FaceServiceStatus.ready) ...[
+            if (_persons.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.manage_search),
+                tooltip: 'Re-scan faces',
+                onPressed: _startFaceIndexing,
+              ),
             IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'Refresh',
               onPressed: _loadPersons,
             ),
+          ],
         ],
       ),
       body: _buildBody(isDark),

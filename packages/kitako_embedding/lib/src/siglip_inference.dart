@@ -158,10 +158,18 @@ class SiglipInference {
     bool acceleratorActive = false;
 
     if (Platform.isAndroid) {
+      // Try FP16 first — enables GPU/DSP acceleration on most Android SoCs.
+      // Fall back to useNone (CPU NNAPI) if the device doesn't support it.
       try {
-        acceleratorActive = opts.appendNnapiProvider(NnapiFlags.useNone);
-        if (acceleratorActive) ep = 'nnapi';
+        acceleratorActive = opts.appendNnapiProvider(NnapiFlags.useFp16);
+        if (acceleratorActive) ep = 'nnapi-fp16';
       } catch (_) {}
+      if (!acceleratorActive) {
+        try {
+          acceleratorActive = opts.appendNnapiProvider(NnapiFlags.useNone);
+          if (acceleratorActive) ep = 'nnapi';
+        } catch (_) {}
+      }
     } else if (Platform.isIOS || Platform.isMacOS) {
       try {
         acceleratorActive = opts.appendCoreMLProvider(CoreMLFlags.useNone);

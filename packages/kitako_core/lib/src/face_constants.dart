@@ -12,16 +12,21 @@ const int kFaceInputSize = 112;
 /// Input size for the face detection model (SCRFD)
 const int kFaceDetectorInputSize = 640;
 
-/// Default minimum confidence for face detection
-const double kFaceDetectionConfidenceThreshold = 0.3;
+/// Default minimum confidence for face detection.
+/// InsightFace SCRFD uses 0.02 internally and relies on NMS to suppress
+/// duplicates. 0.10 is a practical mobile compromise: catches weak detections
+/// without flooding NMS with tens of thousands of near-zero candidates.
+const double kFaceDetectionConfidenceThreshold = 0.10;
 
-/// Default cosine distance threshold for same-person clustering
-/// Lower = stricter (fewer false merges), Higher = more lenient
-/// ArcFace typical range: 0.3–0.5 cosine distance
-const double kFaceClusteringThreshold = 0.45;
+/// Default cosine distance threshold for same-person clustering.
+/// InsightFace publishes eps=0.6 for ArcFace DBSCAN clustering.
+/// Using 0.6 here matches that reference.
+const double kFaceClusteringThreshold = 0.6;
 
-/// Minimum faces to form a person cluster in DBSCAN
-const int kFaceClusteringMinPoints = 2;
+/// Minimum faces to form a person cluster in DBSCAN.
+/// 1 = any two faces within eps form a cluster; no face is unreachable
+/// just because it only has one similar neighbor.
+const int kFaceClusteringMinPoints = 1;
 
 /// Maximum number of faces to process per image
 const int kMaxFacesPerImage = 10;
