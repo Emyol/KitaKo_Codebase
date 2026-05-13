@@ -16,7 +16,7 @@ import 'package:path_provider/path_provider.dart';
 /// Search order:
 ///   1. App documents directory (populated via [copyModelsFromTmp]).
 ///   2. /data/local/tmp/ (ADB-pushed, Android only).
-///   3. <cwd>/models/kitako/ (desktop development).
+///   3. <cwd>/models/ (desktop development).
 class ModelDownloadService {
   static const Map<String, String> _keyToFilename = {
     'kitako_vision_fp32': 'kitako_image_encoder_fp32.onnx',
@@ -51,7 +51,7 @@ class ModelDownloadService {
     if (path == null) {
       throw StateError(
         'Model "$key" not found. '
-        'Push via ADB or place in models/kitako/.',
+        'Push via ADB or place in models/.',
       );
     }
     return path;
@@ -171,11 +171,11 @@ class ModelDownloadService {
     if (Platform.isAndroid) {
       debugPrint('Push models via ADB:');
       for (final fn in _keyToFilename.values) {
-        debugPrint('  adb push models/kitako/$fn /data/local/tmp/');
+        debugPrint('  adb push models/$fn /data/local/tmp/');
       }
     } else {
       debugPrint(
-        'Place models in: ${Directory.current.path}/models/kitako/',
+        'Place models in: ${Directory.current.path}/models/',
       );
     }
     debugPrint('══════════════════════════');
@@ -197,7 +197,7 @@ class ModelDownloadService {
     }
 
     // 3. Workspace-relative desktop path.
-    final desktop = File('${Directory.current.path}/models/kitako/$filename');
+    final desktop = File('${Directory.current.path}/models/$filename');
     if (await desktop.exists()) return desktop.path;
 
     return null;

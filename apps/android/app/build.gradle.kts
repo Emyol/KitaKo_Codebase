@@ -48,7 +48,7 @@ flutter {
 // ---------------------------------------------------------------------------
 // Auto-push ONNX models to connected Android device during development.
 //
-// Looks for model files in <workspace>/models/kitako/ and pushes any that
+// Looks for model files in <workspace>/models/ and pushes any that
 // are missing from /data/local/tmp/ on the device. The app's
 // copyModelsFromTmp() copies them to its private directory on first launch.
 // ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ tasks.register("pushOnnxModels") {
     doLast {
         val modelsDir = file("../../../../models/kitako")
         if (!modelsDir.exists()) {
-            logger.warn("pushOnnxModels: models/kitako/ not found at ${modelsDir.absolutePath}")
+            logger.warn("pushOnnxModels: models/ not found at ${modelsDir.absolutePath}")
             return@doLast
         }
 

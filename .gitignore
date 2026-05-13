@@ -48,13 +48,10 @@ assets/models/onnx/
 assets/indexes/
 dataset/images/
 
-# Kitako models (too large for git)
-models/kitako/
-
 # App-specific large assets
-apps/kitako_app/assets/models/*.onnx
-apps/kitako_app/assets/model/**/*.tflite
-apps/kitako_app/assets/index/
+apps/assets/models/*.onnx
+apps/assets/model/**/*.tflite
+apps/assets/index/
 
 # Python virtual environment
 .venv/

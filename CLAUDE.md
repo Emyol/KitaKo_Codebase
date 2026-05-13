@@ -121,16 +121,16 @@ If LFS is not installed: `git lfs install` first, then `git lfs pull`.
 | `apps/assets/models/tokenizer/tokenizer.json` | GemmaTokenizer vocab | ~10 MB |
 | `apps/assets/models/face/face_detector.onnx` | SCRFD-2.5G face detector | ~2.5 MB |
 | `apps/assets/models/face/face_embedder.onnx` | ArcFace MobileFaceNet | ~13 MB |
-| `models/kitako/kitako_image_encoder_fp32.onnx` | FP32 image encoder (desktop/tools) | ~380 MB |
-| `models/kitako/kitako_text_encoder_fp32.onnx` | FP32 text encoder (desktop/tools) | ~90 MB |
-| `models/kitako/kitako_text_encoder_int8.onnx` | INT8 text encoder (desktop/tools) | ~23 MB |
+| `models/kitako_image_encoder_fp32.onnx` | FP32 image encoder (desktop/tools) | ~380 MB |
+| `models/kitako_text_encoder_fp32.onnx` | FP32 text encoder (desktop/tools) | ~90 MB |
+| `models/kitako_text_encoder_int8.onnx` | INT8 text encoder (desktop/tools) | ~23 MB |
 
-> Note: `models/kitako/` and `apps/assets/models/*.onnx` appear in
+> Note: `models/` and `apps/assets/models/*.onnx` appear in
 > `.gitignore` but were force-added via LFS before the ignore rule was written.
 > They ARE committed — `git lfs ls-files` confirms them. Do not re-add or re-ignore.
 
 ### Android model push (large FP32 models)
-The `models/kitako/` FP32 models are too large to bundle as Flutter assets.
+The `models/` FP32 models are too large to bundle as Flutter assets.
 They are pushed to the device's `/data/local/tmp/` via a Gradle task that runs
 automatically on every `flutter run`:
 
@@ -168,7 +168,7 @@ changes are pushed:
 | `packages/kitako_embedding/lib/src/image_preprocessor.dart` | Added `preprocessRgbaAsync` / `_preprocessRgbaInIsolate` |
 | `packages/kitako_embedding/lib/src/onnx_embedding_service.dart` | Added `embedImageFromRgba` |
 | `packages/kitako_embedding/pubspec.yaml` | Dependency updates |
-| `models/kitako/kitako_text_encoder_int8.onnx` | Updated INT8 model (LFS pointer updated) |
+| `models/kitako_text_encoder_int8.onnx` | Updated INT8 model (LFS pointer updated) |
 
 **Action for a new Claude:** run `git status` immediately. If these files show as
 modified, the changes were committed and you're up to date. If git status is

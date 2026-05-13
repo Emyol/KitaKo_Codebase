@@ -146,9 +146,9 @@ class EmbeddingService {
     _isInitialized = false;
     debugPrint('EmbeddingService: ✗ No ONNX model found.');
     debugPrint('EmbeddingService: For Android, push models via ADB:');
-    debugPrint('  adb push models/kitako/kitako_image_encoder_int8.onnx /data/local/tmp/');
-    debugPrint('  adb push models/kitako/kitako_text_encoder_int8.onnx /data/local/tmp/');
-    debugPrint('EmbeddingService: For desktop, place models in models/kitako/ in workspace root.');
+    debugPrint('  adb push models/kitako_image_encoder_int8.onnx /data/local/tmp/');
+    debugPrint('  adb push models/kitako_text_encoder_int8.onnx /data/local/tmp/');
+    debugPrint('EmbeddingService: For desktop, place models in models/ in workspace root.');
     return false;
   }
 
