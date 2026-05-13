@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kitako_ann/kitako_ann.dart' as ann;
-import '../../bench/bench_screen.dart';
 import '../../models/search_models.dart';
 import '../../services/image_loader_service.dart';
 import '../../services/image_search_service.dart';
@@ -266,18 +265,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
         title: const Text('Alpha Test'),
         backgroundColor: isDark ? const Color(0xFF1A1A1A) : null,
         actions: [
-          IconButton(
-            tooltip: 'Caption benchmark',
-            icon: const Icon(Icons.assessment_outlined),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      BenchScreen(searchService: widget.searchService),
-                ),
-              );
-            },
-          ),
         ],
       ),
       body: Column(
@@ -765,7 +752,7 @@ class _AlgorithmButton extends StatelessWidget {
         duration: const Duration(milliseconds: 120),
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
         decoration: BoxDecoration(
-          color: isSelected ? option.color.withOpacity(0.15) : base,
+          color: isSelected ? option.color.withValues(alpha: 0.15) : base,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: isSelected
@@ -831,9 +818,9 @@ class _HnswTunerPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.purple.withOpacity(0.06),
+        color: Colors.purple.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.purple.withOpacity(0.25)),
+        border: Border.all(color: Colors.purple.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -859,7 +846,7 @@ class _HnswTunerPanel extends StatelessWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.purple.withOpacity(0.15),
+                  color: Colors.purple.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -961,9 +948,9 @@ class _IvfpqTunerPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(0.06),
+        color: Colors.orange.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange.withOpacity(0.25)),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1008,7 +995,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.15),
+                  color: Colors.orange.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -1208,7 +1195,7 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
