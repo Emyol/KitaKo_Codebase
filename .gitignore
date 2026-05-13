@@ -70,3 +70,6 @@ tools/xenova_models/
 
 # Test images
 assets/test_images/
+
+# Thesis Chapter 4 validation scripts and outputs (local-only, do not push)
+/chapter_4_validation_src/

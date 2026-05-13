@@ -21,6 +21,13 @@ class TaglishNormalizer {
   /// Punctuation characters to add spacing around.
   static const String _punctuation = r'''!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~''';
 
+  /// Pre-compiled dictionary patterns — built once on first use, reused forever.
+  /// Compiling 580+ RegExp objects per query was the main latency source.
+  static final List<(RegExp, String)> _dictPatterns = [
+    for (final e in normalizationDictionary.entries)
+      (RegExp(r'\b' + RegExp.escape(e.key) + r'\b'), e.value),
+  ];
+
   /// Normalizes Taglish text for embedding/search.
   ///
   /// Processing steps:
@@ -66,7 +73,7 @@ class TaglishNormalizer {
     // Step 8: Tokenize and process
     final tokens = result.split(' ');
 
-    // Step 9: Handle "nag-" + English verb patterns
+    // Step 9: Strip Taglish verbal prefixes and English -ing gerunds
     final processedTokens = _processNagVerbs(tokens);
 
     // Step 10: Remove consecutive duplicates (except allowed reduplication)
@@ -76,13 +83,11 @@ class TaglishNormalizer {
     return dedupedTokens.join(' ').trim();
   }
 
-  /// Applies dictionary mappings using word boundaries.
+  /// Applies dictionary mappings using pre-compiled word-boundary patterns.
   String _applyDictionary(String text) {
     var result = text;
-    for (final entry in normalizationDictionary.entries) {
-      // Use word boundary regex for accurate replacement
-      final pattern = RegExp(r'\b' + RegExp.escape(entry.key) + r'\b');
-      result = result.replaceAll(pattern, entry.value);
+    for (final (pattern, replacement) in _dictPatterns) {
+      result = result.replaceAll(pattern, replacement);
     }
     return result;
   }
@@ -135,27 +140,54 @@ class TaglishNormalizer {
     return result;
   }
 
-  /// Processes "nag-" + English verb patterns.
+  // Taglish verbal prefixes that attach to English verbs, longest first.
+  static const List<String> _taglishPrefixes = [
+    'naka', 'nag', 'mag', 'na', 'ma',
+  ];
+
+  /// Processes Taglish prefix + English verb patterns and standalone -ing gerunds.
   ///
-  /// Converts Taglish verb conjugations to base English verbs.
-  /// Example: "nagshopping" → "shopping", "nagcooking" → "cooking"
+  /// Strips Taglish verbal prefixes (nag-, naka-, na-, mag-, ma-) and/or the
+  /// English -ing suffix to recover the base verb.
+  /// Examples: "nagshopping" → "shop", "shopping" → "shop", "nagwork" → "work"
   List<String> _processNagVerbs(List<String> tokens) {
-    final result = <String>[];
+    return tokens.map(_normalizeVerb).toList();
+  }
 
-    for (var token in tokens) {
-      if (token.startsWith('nag')) {
-        // Check if token ends with any English verb
-        for (final verb in englishVerbs) {
-          if (token.endsWith(verb)) {
-            token = verb;
-            break;
-          }
-        }
+  String _normalizeVerb(String token) {
+    for (final prefix in _taglishPrefixes) {
+      if (token.startsWith(prefix) && token.length > prefix.length) {
+        final stem = token.substring(prefix.length);
+        if (englishVerbs.contains(stem)) return stem;
+        final base = _stripIngSuffix(stem);
+        if (base != null) return base;
       }
-      result.add(token);
     }
+    // No prefix — try stripping -ing from a standalone gerund.
+    final base = _stripIngSuffix(token);
+    if (base != null) return base;
+    return token;
+  }
 
-    return result;
+  /// Strips the English -ing suffix and returns the base verb if it is in
+  /// [englishVerbs]; returns null if no valid base is found.
+  ///
+  /// Handles three standard English -ing formation patterns:
+  ///   direct strip   : cooking  → cook
+  ///   doubled consonant: shopping → shopp → shop
+  ///   e-drop         : hiking   → hik   → hike
+  String? _stripIngSuffix(String word) {
+    if (!word.endsWith('ing') || word.length <= 4) return null;
+    final stem = word.substring(0, word.length - 3);
+    if (englishVerbs.contains(stem)) return stem;
+    // Doubled consonant: shopping → shopp → shop
+    if (stem.length >= 2 && stem[stem.length - 1] == stem[stem.length - 2]) {
+      final undoubled = stem.substring(0, stem.length - 1);
+      if (englishVerbs.contains(undoubled)) return undoubled;
+    }
+    // e-drop: hiking → hik → hike
+    if (englishVerbs.contains('${stem}e')) return '${stem}e';
+    return null;
   }
 
   /// Removes consecutive duplicate tokens.
@@ -182,6 +214,202 @@ class TaglishNormalizer {
 
     return result;
   }
+
+  /// Runs the normalization pipeline and records a per-rule trace.
+  ///
+  /// Returns the same final output as [normalize] but also captures the
+  /// before/after state for each of the seven thesis-level rules. Used by
+  /// research instrumentation under `chapter_4_validation_src/` to produce
+  /// the §4.2.1 results table (token-level firing rates per rule).
+  ///
+  /// Pipeline-step grouping into the seven rules cited in §3.4.4:
+  ///   1. CaseFolding          (Step 1)
+  ///   2. DictionarySubstitution (Steps 2 + 2b)
+  ///   3. ApostropheHyphen     (Steps 3 + 4)
+  ///   4. CharRunCollapse      (Step 5)
+  ///   5. PunctuationSpacing   (Steps 6 + 7)
+  ///   6. AffixStripping       (Step 9)
+  ///   7. Reduplication        (Step 10)
+  NormalizationTrace normalizeWithTrace(String text) {
+    final input = text;
+    final inputTokens = _whitespaceTokens(text).length;
+    final steps = <RuleStep>[];
+
+    if (text.isEmpty) {
+      return NormalizationTrace(
+        input: input,
+        output: '',
+        inputTokens: 0,
+        steps: const [],
+      );
+    }
+
+    String state = text;
+
+    // Rule 1 — Case folding
+    var before = state;
+    state = state.toLowerCase();
+    steps.add(_makeStringStep('CaseFolding', before, state));
+
+    // Rule 2 — Dictionary substitution (general + context-sensitive)
+    before = state;
+    state = _applyDictionary(state);
+    state = _applyContextSensitive(state);
+    steps.add(_makeStringStep('DictionarySubstitution', before, state));
+
+    // Rule 3 — Apostrophe + hyphen normalization
+    before = state;
+    state = state.replaceAll("'", '');
+    state = state.replaceAll('-', ' ');
+    steps.add(_makeStringStep('ApostropheHyphen', before, state));
+
+    // Rule 4 — Character-run collapsing (3+ → 2)
+    before = state;
+    state = _collapseRepeatedChars(state);
+    steps.add(_makeStringStep('CharRunCollapse', before, state));
+
+    // Rule 5 — Punctuation spacing + whitespace normalization
+    before = state;
+    state = _spacePunctuation(state);
+    state = state.replaceAll(RegExp(r'\s+'), ' ').trim();
+    steps.add(_makeStringStep('PunctuationSpacing', before, state));
+
+    // Tokenize once for the final two list-level rules.
+    var tokens = state.split(' ').where((t) => t.isNotEmpty).toList();
+
+    // Rule 6 — Affix stripping (nag-/naka-/na-/mag-/ma- + English verb, -ing gerunds)
+    final beforeAffix = List<String>.from(tokens);
+    tokens = _processNagVerbs(tokens);
+    steps.add(_makeTokenStep('AffixStripping', beforeAffix, tokens));
+
+    // Rule 7 — Reduplication-aware deduping
+    final beforeDedup = List<String>.from(tokens);
+    tokens = _deduplicateTokens(tokens);
+    steps.add(_makeTokenStep('Reduplication', beforeDedup, tokens));
+
+    return NormalizationTrace(
+      input: input,
+      output: tokens.join(' ').trim(),
+      inputTokens: inputTokens,
+      steps: steps,
+    );
+  }
+
+  RuleStep _makeStringStep(String name, String before, String after) {
+    final beforeTokens = _whitespaceTokens(before);
+    final afterTokens = _whitespaceTokens(after);
+    return RuleStep(
+      ruleName: name,
+      beforeText: before,
+      afterText: after,
+      beforeTokens: beforeTokens,
+      afterTokens: afterTokens,
+      affectedTokens: _tokenDiffCount(beforeTokens, afterTokens),
+      fired: before != after,
+    );
+  }
+
+  RuleStep _makeTokenStep(String name, List<String> before, List<String> after) {
+    return RuleStep(
+      ruleName: name,
+      beforeText: before.join(' '),
+      afterText: after.join(' '),
+      beforeTokens: List<String>.unmodifiable(before),
+      afterTokens: List<String>.unmodifiable(after),
+      affectedTokens: _tokenDiffCount(before, after),
+      fired: !_listEq(before, after),
+    );
+  }
+
+  static List<String> _whitespaceTokens(String s) =>
+      s.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+
+  /// Token-level edit metric: max(|a|, |b|) - LCS(a, b).
+  /// Counts each substitution, insertion, or deletion as 1 affected token.
+  static int _tokenDiffCount(List<String> a, List<String> b) {
+    final m = a.length, n = b.length;
+    if (m == 0) return n;
+    if (n == 0) return m;
+    final dp = List.generate(m + 1, (_) => List<int>.filled(n + 1, 0));
+    for (var i = 1; i <= m; i++) {
+      for (var j = 1; j <= n; j++) {
+        if (a[i - 1] == b[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          dp[i][j] = dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1];
+        }
+      }
+    }
+    final lcs = dp[m][n];
+    return (m > n ? m : n) - lcs;
+  }
+
+  static bool _listEq(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+}
+
+/// One pipeline rule's contribution to a [NormalizationTrace].
+class RuleStep {
+  final String ruleName;
+  final String beforeText;
+  final String afterText;
+  final List<String> beforeTokens;
+  final List<String> afterTokens;
+
+  /// Token-level edit count between [beforeTokens] and [afterTokens]
+  /// (max length minus LCS). Substitution / insertion / deletion = 1.
+  final int affectedTokens;
+
+  /// Whether this rule changed the state at all.
+  final bool fired;
+
+  const RuleStep({
+    required this.ruleName,
+    required this.beforeText,
+    required this.afterText,
+    required this.beforeTokens,
+    required this.afterTokens,
+    required this.affectedTokens,
+    required this.fired,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'rule': ruleName,
+        'before': beforeText,
+        'after': afterText,
+        'before_tokens': beforeTokens,
+        'after_tokens': afterTokens,
+        'affected_tokens': affectedTokens,
+        'fired': fired,
+      };
+}
+
+/// Per-query record of every rule's firing produced by
+/// [TaglishNormalizer.normalizeWithTrace].
+class NormalizationTrace {
+  final String input;
+  final String output;
+  final int inputTokens;
+  final List<RuleStep> steps;
+
+  const NormalizationTrace({
+    required this.input,
+    required this.output,
+    required this.inputTokens,
+    required this.steps,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'input': input,
+        'output': output,
+        'input_tokens': inputTokens,
+        'steps': steps.map((s) => s.toJson()).toList(),
+      };
 }
 
 /// Extension methods for String normalization.

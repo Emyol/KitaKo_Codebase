@@ -30,21 +30,31 @@
  * Citation: Nocon, N. & Cheng, C. (2017). NormAPI: An API for
  * Normalizing Filipino Shortcut Texts. ResearchGate.
  *
- * SOURCE 2 — KitaKo Domain Vocabulary (Derived from 1.2M Captions)
- * -----------------------------------------------------------------
+ * SOURCE 2 — KitaKo Domain Vocabulary (Derived from kitako_captions_v2)
+ * ---------------------------------------------------------------------
  * Domain-specific entries derived from frequency analysis of KitaKo's
- * own 1.2M Taglish image-caption dataset. The dataset covers nine
+ * own Taglish image-caption dataset (`kitako_captions_v2.csv`),
+ * comprising 548,945 captions across 109,789 unique images (~6.25M
+ * Taglish tokens in the `tag_caption` column). The dataset covers nine
  * Philippine visual categories: education, festivals, food culture,
  * housing, markets, rural life, religion, signage, and transportation.
- * High-frequency canonical tokens from these categories were identified,
- * and their common Taglish shorthand forms were generated using the
- * Filipino shortening patterns documented by Nocon et al. (2014), then
- * manually validated. This layer ensures that normalization is aligned
- * with the specific vocabulary of KitaKo's retrieval domain — words
- * that appear frequently in the indexed image captions — so that user
- * queries are normalized toward the same canonical forms used during
- * model training. No external system can provide this layer because it
- * is specific to KitaKo's dataset.
+ *
+ * The top approximately 5% of the caption type-frequency distribution
+ * was extracted and screened for non-canonical surface forms following
+ * the Filipino shortening patterns documented by Nocon et al. (2014) —
+ * consonant-skeleton, ending-a removal, and phonetic substitution.
+ * Candidate mappings were then validated against the canonical Tagalog
+ * wordlist (Source 4) before inclusion. This sampling fraction targets
+ * the high-frequency head of the Zipfian distribution, where shorthand
+ * and code-switched forms cluster, while keeping the candidate set small
+ * enough for manual validation.
+ *
+ * This layer ensures that normalization is aligned with the specific
+ * vocabulary of KitaKo's retrieval domain — words that appear frequently
+ * in the indexed image captions — so that user queries are normalized
+ * toward the same canonical forms used during model training. No
+ * external system can provide this layer because it is specific to
+ * KitaKo's dataset.
  *
  * SOURCE 3 — TweetTaglish Social Media Vocabulary
  * ------------------------------------------------
@@ -562,6 +572,246 @@ const Map<String, String> normalizationDictionary = {
   'prsyo'    : 'presyo',
   'mahal'    : 'mahal',
   'mura'     : 'mura',
+
+  // ================================================================
+  // CAPTION-DERIVED DOMAIN VOCABULARY (kitako_captions_v2.csv)
+  // Lemmas drawn from the top ~5% of the type-frequency distribution
+  // of the tag_caption column (1,842 types covering 91.89% of all
+  // token occurrences across 548,945 captions / ~6.55M alpha tokens).
+  // Shorthand variants generated using NORM consonant-skeleton and
+  // ending-a removal patterns (Nocon et al., 2014), then validated
+  // against the canonical Tagalog wordlist (Source 4).
+  // ================================================================
+
+  // Rural life and nature
+  'kalye'       : 'kalye',
+  'kly'         : 'kalye',
+  'kalsada'     : 'kalsada',
+  'klsada'      : 'kalsada',
+  'lungsod'     : 'lungsod',
+  'lngsod'      : 'lungsod',
+  'lngsd'       : 'lungsod',
+  'gusali'      : 'gusali',
+  'gsali'       : 'gusali',
+  'dagat'       : 'dagat',
+  'dgat'        : 'dagat',
+  'karagatan'   : 'karagatan',
+  'krgatan'     : 'karagatan',
+  'dalampasigan': 'dalampasigan',
+  'dlmpsgan'    : 'dalampasigan',
+  'damuhan'     : 'damuhan',
+  'dmuhan'      : 'damuhan',
+  'bukid'       : 'bukid',
+  'bkid'        : 'bukid',
+  'bundok'      : 'bundok',
+  'bndok'       : 'bundok',
+  'ilog'        : 'ilog',
+  'puno'        : 'puno',
+  'kahoy'       : 'kahoy',
+  'khoy'        : 'kahoy',
+  'lupa'        : 'lupa',
+  'niyebe'      : 'niyebe',
+  'nybe'        : 'niyebe',
+  'ulan'        : 'ulan',
+  'araw'        : 'araw',
+  'arw'         : 'araw',
+  'buwan'       : 'buwan',
+  'bwan'        : 'buwan',
+  'bulaklak ng' : 'bulaklak ng',
+
+  // Animals
+  'aso'         : 'aso',
+  'pusa'        : 'pusa',
+  'psa'         : 'pusa',
+  'kabayo'      : 'kabayo',
+  'kbyo'        : 'kabayo',
+  'kbayo'       : 'kabayo',
+  'ibon'        : 'ibon',
+  'iobn'        : 'ibon',
+  'idsa'        : 'isda',
+  'manok'       : 'manok',
+  'mnok'        : 'manok',
+  'kalabaw'     : 'kalabaw',
+  'klabaw'      : 'kalabaw',
+
+  // People and common subjects
+  'lalaki'      : 'lalaki',
+  'llki'        : 'lalaki',
+  'llaki'       : 'lalaki',
+  'babae'       : 'babae',
+  'bbae'        : 'babae',
+  'bata'        : 'bata',
+  'bta'         : 'bata',
+  'larawan'     : 'larawan',
+  'lrwan'       : 'larawan',
+  'larwan'      : 'larawan',
+
+  // Signage and street furniture
+  'karatula'    : 'karatula',
+  'krtula'      : 'karatula',
+  'orasan'      : 'orasan',
+  'orsan'       : 'orasan',
+  'parke'       : 'parke',
+  'prke'        : 'parke',
+  'tulay'       : 'tulay',
+
+  // Household objects (extension to housing)
+  'mesa'        : 'mesa',
+  'upuan'       : 'upuan',
+  'upwan'       : 'upuan',
+  'silid'       : 'silid',
+  'sld'         : 'silid',
+  'salamin'     : 'salamin',
+  'slmin'       : 'salamin',
+  'payong'      : 'payong',
+  'pyng'        : 'payong',
+  'dingding'    : 'dingding',
+  'dngdng'      : 'dingding',
+  'lababo'      : 'lababo',
+  'lbbo'        : 'lababo',
+  'sahig'       : 'sahig',
+  'plato'       : 'plato',
+  'baso'        : 'baso',
+  'kama'        : 'kama',
+  'kutsara'     : 'kutsara',
+  'ktsra'       : 'kutsara',
+
+  // Transportation (extension)
+  'tren'        : 'tren',
+  'eroplano'    : 'eroplano',
+  'erpln'       : 'eroplano',
+  'motorsiklo'  : 'motorsiklo',
+  'mtrsklo'     : 'motorsiklo',
+  'sasakyan'    : 'sasakyan',
+  'sskyan'      : 'sasakyan',
+  'kotse'       : 'kotse',
+  'ktse'        : 'kotse',
+
+  // Food culture (extension)
+  'saging'      : 'saging',
+  'sging'       : 'saging',
+  'gulay'       : 'gulay',
+  'glay'        : 'gulay',
+  'itlog'       : 'itlog',
+  'prutas'      : 'prutas',
+  'prts'        : 'prutas',
+  'tinapay'     : 'tinapay',
+  'tnapay'      : 'tinapay',
+
+  // Stative locative verbs (naka- prefix on Tagalog roots)
+  // High-frequency in caption descriptions of visual scenes
+  'nakaupo'     : 'nakaupo',
+  'nkaupo'      : 'nakaupo',
+  'nakatayo'    : 'nakatayo',
+  'nktayo'      : 'nakatayo',
+  'nakahiga'    : 'nakahiga',
+  'nkahiga'     : 'nakahiga',
+  'nakasakay'   : 'nakasakay',
+  'nksakay'     : 'nakasakay',
+  'nakasuot'    : 'nakasuot',
+  'nksuot'      : 'nakasuot',
+  'nakatingin'  : 'nakatingin',
+  'nktingin'    : 'nakatingin',
+  'nakaparada'  : 'nakaparada',
+  'nkparada'    : 'nakaparada',
+  'nakapatong'  : 'nakapatong',
+  'nkpatong'    : 'nakapatong',
+  'nakasabit'   : 'nakasabit',
+  'nksabit'     : 'nakasabit',
+  'nakahawak'   : 'nakahawak',
+  'nakasandal'  : 'nakasandal',
+
+  // Action verbs (mag-/-um- forms common in captions)
+  'naglalakad'  : 'naglalakad',
+  'nglalakad'   : 'naglalakad',
+  'naglalaro'   : 'naglalaro',
+  'nglalaro'    : 'naglalaro',
+  'kumakain'    : 'kumakain',
+  'kmkain'      : 'kumakain',
+  'lumilipad'   : 'lumilipad',
+  'lmlipad'     : 'lumilipad',
+  'tumatakbo'   : 'tumatakbo',
+  'tmtkbo'      : 'tumatakbo',
+  'umiinom'     : 'umiinom',
+  'nagluluto'   : 'nagluluto',
+  'ngluluto'    : 'nagluluto',
+  'naghahanda'  : 'naghahanda',
+  'nghahanda'   : 'naghahanda',
+  'nagpapakita' : 'nagpapakita',
+  'hawak'       : 'hawak',
+  'hwak'        : 'hawak',
+
+  // Colors (high-frequency descriptors in caption queries)
+  'asul'        : 'asul',
+  'puti'        : 'puti',
+  'puting'      : 'puti',
+  'itim'        : 'itim',
+  'itm'         : 'itim',
+  'pula'        : 'pula',
+  'pulang'      : 'pula',
+  'berde'       : 'berde',
+  'berdeng'     : 'berde',
+  'brde'        : 'berde',
+  'dilaw'       : 'dilaw',
+  'dlaw'        : 'dilaw',
+  'kulay'       : 'kulay',
+  'klay'        : 'kulay',
+  'kahel'       : 'kahel',
+  'rosas'       : 'rosas',
+
+  // Spatial relations (locative descriptors)
+  'ibabaw'      : 'ibabaw',
+  'ibbw'        : 'ibabaw',
+  'ilalim'      : 'ilalim',
+  'illm'        : 'ilalim',
+  'malapit'     : 'malapit',
+  'mlpit'       : 'malapit',
+  'malayo'      : 'malayo',
+  'mlyo'        : 'malayo',
+  'paligid'     : 'paligid',
+  'pligid'      : 'paligid',
+
+  // Size and quantity descriptors
+  'malaki'      : 'malaki',
+  'mlki'        : 'malaki',
+  'malaking'    : 'malaki',
+  'maliit'      : 'maliit',
+  'mlit'        : 'maliit',
+  'marami'      : 'marami',
+  'mrami'       : 'marami',
+  'maraming'    : 'marami',
+  'ilan'        : 'ilan',
+  'ilang'       : 'ilan',
+  'dalawa'      : 'dalawa',
+  'dalawang'    : 'dalawa',
+  'tatlo'       : 'tatlo',
+  'tatlong'     : 'tatlo',
+
+  // Body parts (high-frequency in caption descriptions)
+  'kamay'       : 'kamay',
+  'kmay'        : 'kamay',
+  'ulo'         : 'ulo',
+  'mata'        : 'mata',
+  'mukha'       : 'mukha',
+  'mkha'        : 'mukha',
+  'paa'         : 'paa',
+  'binti'       : 'binti',
+  'leeg'        : 'leeg',
+  'tenga'       : 'tenga',
+
+  // Materials and miscellaneous objects (caption-derived)
+  'saranggola'  : 'saranggola',
+  'srnggola'    : 'saranggola',
+  'damo'        : 'damo',
+  'tubig'       : 'tubig',
+  'tbig'        : 'tubig',
+  'bato'        : 'bato',
+  'apoy'        : 'apoy',
+  'usok'        : 'usok',
+  'pader'       : 'pader',
+  'pdr'         : 'pader',
+  'hagdan'      : 'hagdan',
+  'hgdn'        : 'hagdan',
 
   // ================================================================
   // ENGLISH SHORTHANDS COMMON IN TAGLISH
