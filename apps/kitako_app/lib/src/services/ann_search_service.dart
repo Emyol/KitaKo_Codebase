@@ -197,12 +197,13 @@ class ANNSearchService {
   /// Example for 751 images: 75 centroids, 27 clusters → ~10 pts/centroid ✓
   static ann.IvfPqConfig _ivfpqConfigFor(int n) {
     final numCentroids = (n / 10).floor().clamp(8, 256);
+    final numClusters = math.sqrt(n).round().clamp(2, 256);
     return ann.IvfPqConfig(
       dimension: 768,
-      numClusters: 256,
+      numClusters: numClusters,
       numSubquantizers: 64,           // 768 / 64 = 12 dims per subquantizer
       numCentroidsPerSubquantizer: numCentroids,
-      numProbes: 256,
+      numProbes: numClusters,         // probe all clusters → max recall
       trainingIterations: 50,
     );
   }
@@ -880,6 +881,28 @@ class ANNSearchService {
     allResults.sort((a, b) => b.similarity.compareTo(a.similarity));
     _logTop5('Brute-force', allResults);
     return allResults.take(k).toList();
+  }
+
+  /// Score a query embedding against a specific subset of image IDs.
+  ///
+  /// Used for person-filtered semantic search: narrow candidates by face label,
+  /// then re-rank only those candidates using the SigLIP-2 text embedding.
+  /// Returns up to [k] results sorted by similarity descending.
+  List<SearchResultWithScore> searchSubset(
+    List<double> queryEmbedding,
+    Set<String> imageIds, {
+    int k = 20,
+  }) {
+    final results = <SearchResultWithScore>[];
+    for (final id in imageIds) {
+      final emb = _imageEmbeddings[id];
+      final meta = _imageMetadata[id];
+      if (emb == null || meta == null) continue;
+      final sim = _cosineSimilarity(queryEmbedding, emb);
+      results.add(SearchResultWithScore(image: meta, similarity: sim));
+    }
+    results.sort((a, b) => b.similarity.compareTo(a.similarity));
+    return results.take(k).toList();
   }
 
   void _logTop5(String label, List<SearchResultWithScore> results) {
