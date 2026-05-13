@@ -41,7 +41,7 @@ Other remote branches for reference:
     `kFaceDetectorInputSize=640`, `kFaceClusteringThreshold=0.45`, reference landmarks
   - `face_errors.dart`, `models/face_detection.dart` — Face/Person data models
 
-### App services (`apps/kitako_app/lib/src/services/`)
+### App services (`apps/lib/src/services/`)
 - **`image_search_service.dart`** — central orchestrator: batch embedding (size 5),
   per-batch individual fallback on failure, partial-failure pause + retry/skip UI,
   lazy image loading (no eager thumbnail bytes), face indexing (user-initiated only)
@@ -116,16 +116,16 @@ If LFS is not installed: `git lfs install` first, then `git lfs pull`.
 ### Model locations
 | Path | Purpose | Size |
 |------|---------|------|
-| `apps/kitako_app/assets/models/kitako_image_encoder_fp32.onnx` | Image encoder (app asset) | ~190 MB |
-| `apps/kitako_app/assets/models/kitako_text_encoder_int8.onnx` | Text encoder INT8 (app asset) | ~23 MB |
-| `apps/kitako_app/assets/models/tokenizer/tokenizer.json` | GemmaTokenizer vocab | ~10 MB |
-| `apps/kitako_app/assets/models/face/face_detector.onnx` | SCRFD-2.5G face detector | ~2.5 MB |
-| `apps/kitako_app/assets/models/face/face_embedder.onnx` | ArcFace MobileFaceNet | ~13 MB |
+| `apps/assets/models/kitako_image_encoder_fp32.onnx` | Image encoder (app asset) | ~190 MB |
+| `apps/assets/models/kitako_text_encoder_int8.onnx` | Text encoder INT8 (app asset) | ~23 MB |
+| `apps/assets/models/tokenizer/tokenizer.json` | GemmaTokenizer vocab | ~10 MB |
+| `apps/assets/models/face/face_detector.onnx` | SCRFD-2.5G face detector | ~2.5 MB |
+| `apps/assets/models/face/face_embedder.onnx` | ArcFace MobileFaceNet | ~13 MB |
 | `models/kitako/kitako_image_encoder_fp32.onnx` | FP32 image encoder (desktop/tools) | ~380 MB |
 | `models/kitako/kitako_text_encoder_fp32.onnx` | FP32 text encoder (desktop/tools) | ~90 MB |
 | `models/kitako/kitako_text_encoder_int8.onnx` | INT8 text encoder (desktop/tools) | ~23 MB |
 
-> Note: `models/kitako/` and `apps/kitako_app/assets/models/*.onnx` appear in
+> Note: `models/kitako/` and `apps/assets/models/*.onnx` appear in
 > `.gitignore` but were force-added via LFS before the ignore rule was written.
 > They ARE committed — `git lfs ls-files` confirms them. Do not re-add or re-ignore.
 
@@ -136,7 +136,7 @@ automatically on every `flutter run`:
 
 ```bash
 # Manual push if needed:
-cd apps/kitako_app
+cd apps
 ./gradlew pushOnnxModels
 ```
 
@@ -153,18 +153,18 @@ changes are pushed:
 
 | File | Change |
 |------|--------|
-| `apps/kitako_app/lib/main.dart` | Removed `startFaceIndexing()` auto-call; face indexing is now user-initiated |
-| `apps/kitako_app/lib/src/services/image_search_service.dart` | Batch size=5, per-batch fallback, pause/retry on failure, `loadResizedForEmbedding` pipeline, lazy loading |
-| `apps/kitako_app/lib/src/services/embedding_service.dart` | Added `generateImageEmbeddingFromRgba` |
-| `apps/kitako_app/lib/src/services/embedding_service_stub.dart` | Added `embedImageFromRgba` web stub |
-| `apps/kitako_app/lib/src/services/image_loader_service.dart` | Added `loadResizedForEmbedding` (512×512 DCT pre-shrink via `dart:ui`) |
-| `apps/kitako_app/lib/src/ui/screens/startup_screen.dart` | Amber retry/skip UI for `embeddingPartialFailure` phase |
-| `apps/kitako_app/lib/src/ui/screens/home_screen.dart` | `Image.file(cacheWidth:256)` everywhere, no `cacheHeight` |
-| `apps/kitako_app/lib/src/ui/screens/people_screen.dart` | `_indexingRequested` flag, "Find Faces" button, "No People Found" state |
-| `apps/kitako_app/lib/src/ui/screens/person_detail_screen.dart` | `Image.file` for photo grid (no `cacheHeight`) |
-| `apps/kitako_app/lib/src/ui/screens/results_screen.dart` | `Image.file` (no `cacheHeight`); all `withOpacity` → `withValues(alpha:)` |
-| `apps/kitako_app/lib/src/ui/screens/search_screen.dart` | `Image.file` (no `cacheHeight`) in both thumbnail helpers |
-| `apps/kitako_app/lib/src/ui/screens/alpha_test_screen.dart` | `Image.file` (no `cacheHeight`) in list tile |
+| `apps/lib/main.dart` | Removed `startFaceIndexing()` auto-call; face indexing is now user-initiated |
+| `apps/lib/src/services/image_search_service.dart` | Batch size=5, per-batch fallback, pause/retry on failure, `loadResizedForEmbedding` pipeline, lazy loading |
+| `apps/lib/src/services/embedding_service.dart` | Added `generateImageEmbeddingFromRgba` |
+| `apps/lib/src/services/embedding_service_stub.dart` | Added `embedImageFromRgba` web stub |
+| `apps/lib/src/services/image_loader_service.dart` | Added `loadResizedForEmbedding` (512×512 DCT pre-shrink via `dart:ui`) |
+| `apps/lib/src/ui/screens/startup_screen.dart` | Amber retry/skip UI for `embeddingPartialFailure` phase |
+| `apps/lib/src/ui/screens/home_screen.dart` | `Image.file(cacheWidth:256)` everywhere, no `cacheHeight` |
+| `apps/lib/src/ui/screens/people_screen.dart` | `_indexingRequested` flag, "Find Faces" button, "No People Found" state |
+| `apps/lib/src/ui/screens/person_detail_screen.dart` | `Image.file` for photo grid (no `cacheHeight`) |
+| `apps/lib/src/ui/screens/results_screen.dart` | `Image.file` (no `cacheHeight`); all `withOpacity` → `withValues(alpha:)` |
+| `apps/lib/src/ui/screens/search_screen.dart` | `Image.file` (no `cacheHeight`) in both thumbnail helpers |
+| `apps/lib/src/ui/screens/alpha_test_screen.dart` | `Image.file` (no `cacheHeight`) in list tile |
 | `packages/kitako_embedding/lib/src/image_preprocessor.dart` | Added `preprocessRgbaAsync` / `_preprocessRgbaInIsolate` |
 | `packages/kitako_embedding/lib/src/onnx_embedding_service.dart` | Added `embedImageFromRgba` |
 | `packages/kitako_embedding/pubspec.yaml` | Dependency updates |
@@ -190,7 +190,7 @@ git lfs install   # only needed once per machine
 git lfs pull
 
 # 3. Install Flutter dependencies
-cd apps/kitako_app
+cd apps
 flutter pub get
 
 # 4. Install package dependencies
@@ -200,7 +200,7 @@ cd ../kitako_ann               && dart pub get
 cd ../kitako_normalizer        && dart pub get
 
 # 5. Android: verify a device is connected, then run
-cd ../../apps/kitako_app
+cd ../../apps
 flutter run   # Gradle will auto-run pushOnnxModels
 ```
 
