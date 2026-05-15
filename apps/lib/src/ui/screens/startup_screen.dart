@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -38,7 +38,7 @@ class _StartupScreenState extends State<StartupScreen>
 
   StreamSubscription<IndexingProgress>? _progressSub;
   IndexingProgress _progress =
-      const IndexingProgress(phase: IndexingPhase.idle, message: 'Starting…');
+      const IndexingProgress(phase: IndexingPhase.idle, message: 'Startingâ€¦');
 
   bool _navigated = false;
   bool _startTriggered = false;
@@ -109,7 +109,13 @@ class _StartupScreenState extends State<StartupScreen>
   void _onProgress(IndexingProgress p) {
     if (!mounted) return;
     setState(() => _progress = p);
-    if (p.phase == IndexingPhase.ready) {
+    // Navigate as soon as the model is loaded and cache is restored â€”
+    // embedding continues in the background while the user browses.
+    // The loading/prewarming/cache phases are fast (seconds); the embedding
+    // phase can take minutes on a large gallery, so we don't block on it.
+    if (p.phase == IndexingPhase.ready ||
+        p.phase == IndexingPhase.embedding ||
+        p.phase == IndexingPhase.loadingGallery) {
       _goHome();
     }
   }
@@ -132,7 +138,7 @@ class _StartupScreenState extends State<StartupScreen>
     setState(() {
       _startTriggered = false;
       _progress = const IndexingProgress(
-          phase: IndexingPhase.idle, message: 'Retrying…');
+          phase: IndexingPhase.idle, message: 'Retryingâ€¦');
     });
     _startInit();
   }
@@ -147,7 +153,7 @@ class _StartupScreenState extends State<StartupScreen>
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF1A1A1A), Color(0xFF0D0D0D)],
+            colors: [Color(0xFF0E1116), Color(0xFF070A0E)],
           ),
         ),
         child: SafeArea(
@@ -214,7 +220,7 @@ class _StartupScreenState extends State<StartupScreen>
             icon: const Icon(Icons.refresh, size: 18),
             label: const Text('Retry'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4A90E2),
+              backgroundColor: const Color(0xFF3B82F6),
               foregroundColor: Colors.white,
               padding:
                   const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -254,7 +260,7 @@ class _StartupScreenState extends State<StartupScreen>
                 icon: const Icon(Icons.refresh, size: 18),
                 label: Text('Retry $failed'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4A90E2),
+                  backgroundColor: const Color(0xFF3B82F6),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(
                       horizontal: 20, vertical: 12),
@@ -289,13 +295,13 @@ class _StartupScreenState extends State<StartupScreen>
             strokeWidth: 2,
             value: fraction,
             valueColor:
-                const AlwaysStoppedAnimation<Color>(Color(0xFF4A90E2)),
-            backgroundColor: const Color(0xFF2A2A2A),
+                const AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
+            backgroundColor: const Color(0xFF161B22),
           ),
         ),
         const SizedBox(height: 16),
         Text(
-          _progress.message.isEmpty ? 'Starting…' : _progress.message,
+          _progress.message.isEmpty ? 'Startingâ€¦' : _progress.message,
           textAlign: TextAlign.center,
           style: const TextStyle(color: Color(0xFF888888), fontSize: 13),
         ),
@@ -306,9 +312,9 @@ class _StartupScreenState extends State<StartupScreen>
             child: LinearProgressIndicator(
               value: fraction,
               minHeight: 3,
-              backgroundColor: const Color(0xFF2A2A2A),
+              backgroundColor: const Color(0xFF161B22),
               valueColor:
-                  const AlwaysStoppedAnimation<Color>(Color(0xFF4A90E2)),
+                  const AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
             ),
           ),
         ],

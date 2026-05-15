@@ -309,8 +309,8 @@ class _PeopleScreenState extends State<PeopleScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: isDark
-                    ? const Color(0xFF2A2A2A)
-                    : const Color(0xFFE8E8E8),
+                    ? const Color(0xFF1A2030)
+                    : const Color(0xFFE8EEF6),
                 border: Border.all(
                   color: person.isLabeled
                       ? Theme.of(context).colorScheme.primary

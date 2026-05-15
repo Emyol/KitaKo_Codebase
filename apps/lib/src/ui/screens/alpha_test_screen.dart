@@ -1,8 +1,7 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kitako_ann/kitako_ann.dart' as ann;
 import '../../models/search_models.dart';
-import '../../services/image_loader_service.dart';
 import '../../services/image_search_service.dart';
 import '../../services/embedding_service.dart';
 
@@ -39,16 +38,15 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   bool _searching = false;
   bool _switchingModel = false;
   bool _runningRecall = false;
-  bool _switchingDataset = false;
   bool _retrainingIvfpq = false;
   bool _headerVisible = true;
 
   _SearchMethod _searchMethod = _SearchMethod.bruteForce;
 
-  // ── HNSW tuning state ──
+  // â”€â”€ HNSW tuning state â”€â”€
   double _hnswEf = 50;
 
-  // ── IVF-PQ tuning state ──
+  // â”€â”€ IVF-PQ tuning state â”€â”€
   bool _ivfAdvancedExpanded = false;
   // Staged values for retrain (committed when the user taps Retrain).
   int? _ivfClustersStaged;
@@ -63,13 +61,13 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   SearchState _lastState = const SearchState();
   Map<String, dynamic>? _recallResult;
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   EmbeddingService get _embedding => widget.searchService.embeddingService;
 
   Map<String, dynamic> get _indexStatus => widget.searchService.annIndexStatus;
 
-  // ── Algorithm selection ──────────────────────────────────────────────────
+  // â”€â”€ Algorithm selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _applySearchMethod(_SearchMethod method) {
     setState(() => _searchMethod = method);
@@ -85,7 +83,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // ── IVF-PQ retrain ───────────────────────────────────────────────────────
+  // â”€â”€ IVF-PQ retrain â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _retrainIvfpq() async {
     if (_retrainingIvfpq) return;
@@ -101,8 +99,8 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(ok
-                ? 'IVF-PQ retrained — staged params applied'
-                : 'IVF-PQ retrain failed (need ≥50 indexed images)'),
+                ? 'IVF-PQ retrained â€” staged params applied'
+                : 'IVF-PQ retrain failed (need â‰¥50 indexed images)'),
           ),
         );
       }
@@ -111,37 +109,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // ── Dataset switch ───────────────────────────────────────────────────────
-
-  Future<void> _switchDataset(TestDataset dataset) async {
-    if (_switchingDataset) return;
-    setState(() => _switchingDataset = true);
-    try {
-      final ok = await widget.searchService.setActiveDataset(dataset.dirName);
-      if (mounted) {
-        if (!ok) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${dataset.label} dataset not found on disk — '
-                'see docs/development/TEST_DATASETS.md',
-              ),
-            ),
-          );
-        } else {
-          // Re-run last query against the new active dataset, if any.
-          if (_queryController.text.trim().isNotEmpty &&
-              _lastState.status == SearchStatus.success) {
-            _runQuery();
-          }
-        }
-      }
-    } finally {
-      if (mounted) setState(() => _switchingDataset = false);
-    }
-  }
-
-  // ── Model switch ─────────────────────────────────────────────────────────
+  // â”€â”€ Model switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _switchModel(ModelVariant variant) async {
     if (_switchingModel) return;
@@ -158,7 +126,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // ── Search ───────────────────────────────────────────────────────────────
+  // â”€â”€ Search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _runQuery() async {
     final query = _queryController.text.trim();
@@ -166,7 +134,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
 
     if (!_embedding.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No model loaded — cannot search')),
+        const SnackBar(content: Text('No model loaded â€” cannot search')),
       );
       return;
     }
@@ -204,7 +172,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // ── Recall@K accuracy test ────────────────────────────────────────────────
+  // â”€â”€ Recall@K accuracy test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _runRecallTest() async {
     final query = _queryController.text.trim();
@@ -212,7 +180,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
 
     if (!_embedding.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No model loaded — cannot test')),
+        const SnackBar(content: Text('No model loaded â€” cannot test')),
       );
       return;
     }
@@ -241,7 +209,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @override
   void dispose() {
@@ -253,7 +221,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final surfaceColor =
-        isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5);
+        isDark ? const Color(0xFF161B22) : const Color(0xFFF4F7FB);
 
     final results = _lastState.result?.images ?? [];
     final scores = _lastState.result?.scores;
@@ -263,13 +231,13 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Alpha Test'),
-        backgroundColor: isDark ? const Color(0xFF1A1A1A) : null,
+        backgroundColor: isDark ? const Color(0xFF0E1116) : null,
         actions: [
         ],
       ),
       body: Column(
         children: [
-          // ── Settings Card ───────────────────────────────────────────────
+          // â”€â”€ Settings Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_headerVisible)
           Container(
             color: surfaceColor,
@@ -319,7 +287,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                // Algorithm selector — 3-button row (face-style)
+                // Algorithm selector â€” 3-button row (face-style)
                 _AlgorithmSelector(
                   selected: _searchMethod,
                   onChanged: _applySearchMethod,
@@ -368,38 +336,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                     isDark: isDark,
                   ),
                 ],
-                const SizedBox(height: 8),
-                // Dataset toggle row
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 60,
-                      child: Text(
-                        'Dataset',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white70 : Colors.black54,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: _switchingDataset
-                          ? const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4),
-                              child: LinearProgressIndicator(),
-                            )
-                          : _DatasetToggle(
-                              activeDirName:
-                                  widget.searchService.activeDataset,
-                              available:
-                                  widget.searchService.availableDatasets,
-                              onChanged: _switchDataset,
-                              isDark: isDark,
-                            ),
-                    ),
-                  ],
-                ),
                 const SizedBox(height: 6),
                 // Model + index status
                 Row(
@@ -417,7 +353,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                     Expanded(
                       child: Text(
                         _embedding.isInitialized
-                            ? '${_embedding.activeVariant?.displayName ?? "Model"} · $indexCount indexed'
+                            ? '${_embedding.activeVariant?.displayName ?? "Model"} Â· $indexCount indexed'
                             : 'No model loaded',
                         style: TextStyle(
                           fontSize: 12,
@@ -438,14 +374,14 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
             ),
           ),
 
-          // ── Header toggle strip ─────────────────────────────────────────
+          // â”€â”€ Header toggle strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           _HeaderToggleStrip(
             visible: _headerVisible,
             onToggle: () => setState(() => _headerVisible = !_headerVisible),
             isDark: isDark,
           ),
 
-          // ── Query Row ───────────────────────────────────────────────────
+          // â”€â”€ Query Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
             child: Row(
@@ -454,7 +390,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                   child: TextField(
                     controller: _queryController,
                     decoration: const InputDecoration(
-                      hintText: 'Search query…',
+                      hintText: 'Search queryâ€¦',
                       border: OutlineInputBorder(),
                       contentPadding:
                           EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -478,7 +414,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                // Recall@10 test button — only relevant for ANN algorithms
+                // Recall@10 test button â€” only relevant for ANN algorithms
                 if (_searchMethod != _SearchMethod.bruteForce)
                   SizedBox(
                     height: 44,
@@ -499,11 +435,11 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
             ),
           ),
 
-          // ── Stats Bar ───────────────────────────────────────────────────
+          // â”€â”€ Stats Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_lastState.status != SearchStatus.idle)
             Container(
               color: isDark
-                  ? const Color(0xFF252525)
+                  ? const Color(0xFF161B22)
                   : const Color(0xFFEAEAEA),
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
@@ -533,7 +469,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        '→ "${_lastState.normalizedQuery}"',
+                        'â†’ "${_lastState.normalizedQuery}"',
                         style: TextStyle(
                           fontSize: 11,
                           color: isDark ? Colors.white38 : Colors.black38,
@@ -547,11 +483,11 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
               ),
             ),
 
-          // ── Recall result banner ─────────────────────────────────────────
+          // â”€â”€ Recall result banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_recallResult != null)
             _RecallBanner(result: _recallResult!, isDark: isDark),
 
-          // ── Per-query diagnostics ────────────────────────────────────────
+          // â”€â”€ Per-query diagnostics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_lastState.status != SearchStatus.idle)
             _DiagnosticsPanel(
               embeddingTimeMs: _lastState.result?.embeddingTimeMs,
@@ -565,7 +501,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
 
           const Divider(height: 1),
 
-          // ── Results ─────────────────────────────────────────────────────
+          // â”€â”€ Results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           Expanded(
             child: hasError
                 ? _ErrorPanel(message: _lastState.error ?? 'Unknown error')
@@ -596,7 +532,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   }
 }
 
-// ── ANN status row ─────────────────────────────────────────────────────────────
+// â”€â”€ ANN status row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _AnnStatusRow extends StatelessWidget {
   final Map<String, dynamic> indexStatus;
@@ -654,9 +590,9 @@ class _AnnStatusRow extends StatelessWidget {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Algorithm selector — 3-button row (face-branch style adapted to v2 services)
-// ──────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Algorithm selector â€” 3-button row (face-branch style adapted to v2 services)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _AlgorithmSelector extends StatelessWidget {
   final _SearchMethod selected;
@@ -744,7 +680,7 @@ class _AlgorithmButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF5F5F5);
+    final base = isDark ? const Color(0xFF1A2030) : const Color(0xFFF4F7FB);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
@@ -757,7 +693,7 @@ class _AlgorithmButton extends StatelessWidget {
           border: Border.all(
             color: isSelected
                 ? option.color
-                : (isDark ? const Color(0xFF3A3A3A) : const Color(0xFFE0E0E0)),
+                : (isDark ? const Color(0xFF1F2733) : const Color(0xFFE2EAF4)),
             width: isSelected ? 1.5 : 1,
           ),
         ),
@@ -798,9 +734,9 @@ class _AlgorithmButton extends StatelessWidget {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// HNSW tuner — runtime ef slider
-// ──────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// HNSW tuner â€” runtime ef slider
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _HnswTunerPanel extends StatelessWidget {
   final double ef;
@@ -887,9 +823,9 @@ class _HnswTunerPanel extends StatelessWidget {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// IVF-PQ tuner — staged params + retrain
-// ──────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// IVF-PQ tuner â€” staged params + retrain
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _IvfpqTunerPanel extends StatelessWidget {
   final ann.IvfPqConfig? activeConfig;
@@ -980,7 +916,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          // nProbes slider — staged-only (retrain to apply)
+          // nProbes slider â€” staged-only (retrain to apply)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1028,8 +964,8 @@ class _IvfpqTunerPanel extends StatelessWidget {
           ),
           Text(
             probes >= clusters
-                ? '⚠ All clusters probed (= brute force with PQ overhead)'
-                : '✓ Probing ${(probes / clusters * 100).toStringAsFixed(0)}% of clusters',
+                ? 'âš  All clusters probed (= brute force with PQ overhead)'
+                : 'âœ“ Probing ${(probes / clusters * 100).toStringAsFixed(0)}% of clusters',
             style: TextStyle(
               fontSize: 9,
               color: probes >= clusters ? Colors.orange : Colors.green[700],
@@ -1152,7 +1088,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
-          // Retrain button — only enabled when staged params differ
+          // Retrain button â€” only enabled when staged params differ
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -1165,7 +1101,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
                   : const Icon(Icons.refresh, size: 14),
               label: Text(
                 isRetraining
-                    ? 'Retraining…'
+                    ? 'Retrainingâ€¦'
                     : (dirty
                         ? 'Apply staged params (retrain)'
                         : 'Retrain with current params'),
@@ -1210,64 +1146,6 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
-/// Compact dataset selector for the alpha screen. Renders a `SegmentedButton`
-/// over the two known test datasets; missing-on-disk datasets render disabled.
-class _DatasetToggle extends StatelessWidget {
-  final String? activeDirName;
-  final Set<String> available;
-  final ValueChanged<TestDataset> onChanged;
-  final bool isDark;
-
-  const _DatasetToggle({
-    required this.activeDirName,
-    required this.available,
-    required this.onChanged,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (TestDataset.all.every((d) => !available.contains(d.dirName))) {
-      return Text(
-        'No test datasets found',
-        style: TextStyle(
-          fontSize: 12,
-          fontStyle: FontStyle.italic,
-          color: isDark ? Colors.white54 : Colors.black45,
-        ),
-      );
-    }
-
-    final selected = <TestDataset>{
-      for (final d in TestDataset.all)
-        if (d.dirName == activeDirName) d,
-    };
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: SegmentedButton<TestDataset>(
-        showSelectedIcon: false,
-        style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
-          textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12)),
-        ),
-        segments: TestDataset.all.map((d) {
-          final present = available.contains(d.dirName);
-          return ButtonSegment<TestDataset>(
-            value: d,
-            label: Text(present ? d.label : '${d.label} (missing)'),
-            enabled: present,
-          );
-        }).toList(),
-        selected: selected,
-        emptySelectionAllowed: true,
-        onSelectionChanged: (sel) {
-          if (sel.isNotEmpty) onChanged(sel.first);
-        },
-      ),
-    );
-  }
-}
 
 class _AnnChip extends StatelessWidget {
   final String label;
@@ -1303,7 +1181,7 @@ class _AnnChip extends StatelessWidget {
   }
 }
 
-// ── Recall banner ──────────────────────────────────────────────────────────────
+// â”€â”€ Recall banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _RecallBanner extends StatelessWidget {
   final Map<String, dynamic> result;
@@ -1350,7 +1228,7 @@ class _RecallBanner extends StatelessWidget {
   }
 }
 
-// ── Diagnostics panel ──────────────────────────────────────────────────────────
+// â”€â”€ Diagnostics panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _DiagnosticsPanel extends StatelessWidget {
   final int? embeddingTimeMs;
@@ -1373,18 +1251,18 @@ class _DiagnosticsPanel extends StatelessWidget {
 
   static const _infos = <String, String>{
     'Query time':
-        'ONNX inference time for the text query — tokenizing the input and '
+        'ONNX inference time for the text query â€” tokenizing the input and '
         'running a forward pass through the text encoder to produce a 768-dim vector. '
         'The model weights stay loaded; this is just the per-query compute cost.',
     'Index search':
         'Time to scan the ANN index for the nearest neighbors to the query vector. '
-        'Brute-force is O(n·d); IVF-PQ and HNSW trade a small accuracy loss for '
+        'Brute-force is O(nÂ·d); IVF-PQ and HNSW trade a small accuracy loss for '
         'sub-linear lookup time.',
     'Total time':
         'Wall-clock time from pressing Run to results being ready, including '
         'embedding, index search, result filtering, and thumbnail loading.',
-    'Memory (ΔRSS)':
-        'Change in process RSS (Resident Set Size) during the search — how much '
+    'Memory (Î”RSS)':
+        'Change in process RSS (Resident Set Size) during the search â€” how much '
         'additional physical RAM was allocated. Near-zero is normal when results '
         'and thumbnails are small. A large positive value may indicate thumbnail '
         'buffering or ORT scratch buffers.',
@@ -1394,12 +1272,12 @@ class _DiagnosticsPanel extends StatelessWidget {
         'xnnpack = optimised CPU (SIMD), cpu = plain ONNX CPU fallback.',
     'Text EP':
         'Execution provider active for the text encoder. '
-        'Same options as Vision EP — the two encoders may land on different backends '
+        'Same options as Vision EP â€” the two encoders may land on different backends '
         'if the hardware accelerator rejects a particular graph.',
   };
 
   String _fmtDelta(int bytes) {
-    final sign = bytes >= 0 ? '+' : '−';
+    final sign = bytes >= 0 ? '+' : 'âˆ’';
     final abs = bytes.abs();
     if (abs >= 1024 * 1024 * 1024) {
       return '$sign${(abs / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
@@ -1442,10 +1320,10 @@ class _DiagnosticsPanel extends StatelessWidget {
         isDark ? Colors.blueAccent[100]! : Colors.indigo;
 
     final rows = <(String, String)>[
-      ('Query time',    embeddingTimeMs != null ? '${embeddingTimeMs}ms' : '—'),
-      ('Index search',  indexSearchTimeMs != null ? '${indexSearchTimeMs}ms' : '—'),
+      ('Query time',    embeddingTimeMs != null ? '${embeddingTimeMs}ms' : 'â€”'),
+      ('Index search',  indexSearchTimeMs != null ? '${indexSearchTimeMs}ms' : 'â€”'),
       ('Total time',    '${totalTimeMs}ms'),
-      ('Memory (ΔRSS)', memoryDeltaBytes != null ? _fmtDelta(memoryDeltaBytes!) : '—'),
+      ('Memory (Î”RSS)', memoryDeltaBytes != null ? _fmtDelta(memoryDeltaBytes!) : 'â€”'),
       ('Vision EP',     imageEp),
       ('Text EP',       textEp),
     ];
@@ -1524,7 +1402,7 @@ class _DiagnosticsPanel extends StatelessWidget {
   }
 }
 
-// ── Sub-widgets ────────────────────────────────────────────────────────────────
+// â”€â”€ Sub-widgets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _StatChip extends StatelessWidget {
   final String label;
@@ -1610,8 +1488,8 @@ class _ScoreBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Kitako INT8 text-image cosine similarity observed range: ~0.08–0.11.
-    // Image-image range: ~0.66–1.00 (no modality gap within same encoder).
+    // Kitako INT8 text-image cosine similarity observed range: ~0.08â€“0.11.
+    // Image-image range: ~0.66â€“1.00 (no modality gap within same encoder).
     final color = score >= 0.10
         ? Colors.green
         : score >= 0.08
@@ -1655,7 +1533,7 @@ class _EmptyPanel extends StatelessWidget {
       message = 'No results found';
       icon = Icons.image_not_supported_outlined;
     } else {
-      message = 'Searching…';
+      message = 'Searchingâ€¦';
       icon = Icons.hourglass_empty;
     }
 
@@ -1679,7 +1557,7 @@ class _EmptyPanel extends StatelessWidget {
   }
 }
 
-// ── Header toggle strip ────────────────────────────────────────────────────────
+// â”€â”€ Header toggle strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _HeaderToggleStrip extends StatelessWidget {
   final bool visible;
@@ -1722,7 +1600,7 @@ class _HeaderToggleStrip extends StatelessWidget {
   }
 }
 
-// ── Full image viewer ──────────────────────────────────────────────────────────
+// â”€â”€ Full image viewer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _FullImageViewer extends StatelessWidget {
   final ImageItem image;

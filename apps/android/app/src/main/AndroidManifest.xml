@@ -4,11 +4,13 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <!-- For Android 12 and below (API 32 and below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- Camera — for image-to-image search via device camera -->
+    <uses-permission android:name="android.permission.CAMERA"/>
     <!-- Optional: For writing photos (not needed for read-only access) -->
     <!-- <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/> -->
 
     <application
-        android:label="kitako_app"
+        android:label="KitaKo"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

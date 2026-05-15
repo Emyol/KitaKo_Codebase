@@ -277,31 +277,6 @@ class ImageSearchService {
     );
   }
 
-  // ========== Active Dataset (Test Set Toggle) ==========
-
-  /// Currently active test dataset (e.g. `personal_1k`), or null if none.
-  String? get activeDataset => _imageLoader.activeDataset;
-
-  /// Datasets discovered on disk during loader init.
-  Set<String> get availableDatasets => _imageLoader.availableDatasets;
-
-  /// Switch which test set is searched. The other set's embeddings stay
-  /// in the index and cache — switching is just a results filter.
-  Future<bool> setActiveDataset(String dirName) {
-    return _imageLoader.setActiveDataset(dirName);
-  }
-
-  /// Filter ANN results to the currently active dataset. Returns the input
-  /// unchanged if no dataset is active.
-  List<SearchResultWithScore> _filterByActiveDataset(
-    List<SearchResultWithScore> results,
-  ) {
-    if (_imageLoader.activeDataset == null) return results;
-    return results
-        .where((r) => _imageLoader.isInActiveDataset(r.image.id))
-        .toList(growable: false);
-  }
-
   /// Set the preferred search algorithm shown in Settings.
   ///
   /// [useHnsw] = `true`  → Accuracy mode  (HNSW)
@@ -437,15 +412,17 @@ class ImageSearchService {
         await _embeddingService.switchToVariant(currentVariant);
       }
 
-      // Load device gallery metadata so the grid can render lazily from disk.
+      // Load device gallery progressively so the grid renders the first batch
+      // (newest 50 photos) before all images are resolved.
       _emitProgress(IndexingPhase.loadingGallery, 'Loading device gallery…');
-      final allImages = await _imageLoader.loadDeviceImages();
-      if (allImages.isNotEmpty) {
-        final gallery = allImages.take(1000).toList();
-        _loadedImages = gallery;
-        _imagesLoadedController.add(gallery);
-        debugPrint('ImageSearchService: Loaded ${gallery.length} images for gallery');
-      }
+      await _imageLoader.loadDeviceImagesProgressive(
+        onBatch: (cumulative) {
+          _loadedImages = cumulative.toList();
+          _imagesLoadedController.add(_loadedImages);
+          debugPrint(
+              'ImageSearchService: Gallery batch — ${_loadedImages.length} images');
+        },
+      );
 
       _isInitialized = true;
 
@@ -533,8 +510,8 @@ class ImageSearchService {
       );
       searchSw.stop();
 
-      // Step 3: Filter to active dataset, take top-k, then apply combo filter.
-      final scoped = _filterByActiveDataset(raw).take(k).toList();
+      // Step 3: Take top-k, then apply combo filter.
+      final scoped = raw.take(k).toList();
       final filtered = _applyComboFilter(scoped);
 
       // Step 4: Collect results (thumbnails are loaded lazily by the grid).
@@ -704,8 +681,8 @@ class ImageSearchService {
         threshold: -1.0,
       );
 
-      // Step 3: Filter to active dataset, take top-k, then apply combo filter.
-      final scoped = _filterByActiveDataset(raw).take(k).toList();
+      // Step 3: Take top-k, then apply combo filter.
+      final scoped = raw.take(k).toList();
       final filtered = _applyComboFilter(scoped, isImageSearch: true);
 
       // Step 4: Collect results (thumbnails are loaded lazily by the grid).
@@ -947,13 +924,7 @@ class ImageSearchService {
         );
       }
 
-      // Only embed personal images for now — scraped test images are excluded
-      // from the indexing pipeline to avoid burning embedding time on them.
-      // Search-time filtering by active dataset still works for both sets.
-      final scrapedPrefix = TestDataset.scraped.idPrefix();
-      final imagesToProcess = allImages
-          .where((img) => !img.id.startsWith(scrapedPrefix))
-          .toList();
+      final imagesToProcess = allImages.toList();
 
       // ── Step 1: Try loading cached embeddings from storage layer ──
       final visionEncoderId =
@@ -985,9 +956,18 @@ class ImageSearchService {
       }
 
       // ── Step 2: Find images that need embedding ──
+      // Sort newest-first so recently taken photos appear in search ASAP.
       final newImages = imagesToProcess
           .where((img) => !cachedIds.contains(img.id))
-          .toList();
+          .toList()
+        ..sort((a, b) {
+          final da = a.createdAt ?? a.modifiedAt;
+          final db = b.createdAt ?? b.modifiedAt;
+          if (da == null && db == null) return 0;
+          if (da == null) return 1;   // no date → embed last
+          if (db == null) return -1;
+          return db.compareTo(da);    // newest first
+        });
 
       debugPrint('');
       debugPrint('╔══════════════════════════════════════════════════════╗');
@@ -1023,15 +1003,25 @@ class ImageSearchService {
       final newEmbeddings = <List<double>>[];
       int successCount = 0;
       int failedCount = 0;
+      int lastCheckpointCount = 0;
 
-      // Concurrency is bounded by per-isolate decode memory, NOT by ONNX
-      // throughput. A 4032×3024 phone JPEG decodes to a ~48 MB RGBA buffer
-      // inside compute() before the preprocessor resizes it; running that
-      // in 10 isolates concurrently pushes ~500 MB of decode buffers on top
-      // of the ~625 MB SigLIP model and OOMs Android. 5 keeps reasonable I/O
-      // overlap; if an entire batch fails it is retried one-by-one before
-      // counting images as permanently failed.
-      const batchSize = 5;
+      // Background-safe batch size: 3 images per batch instead of 5.
+      // Each image decodes to a ~48 MB RGBA buffer in an isolate; 3 concurrent
+      // decodes + the SigLIP model (~625 MB) keeps peak RSS under 800 MB on
+      // mid-range Android devices and leaves headroom for the rest of the OS.
+      const batchSize = 3;
+
+      // Thermal throttling management.
+      // _baselineMs: ms/image measured over the first 15 successfully embedded
+      //   images. Used as the reference throughput for detecting CPU throttling.
+      // If the rolling average degrades past 1.75× baseline (thermal governor
+      //   stepping down frequency), insert a 1.5 s cooldown so the SoC can
+      //   bleed heat before the next batch. Otherwise use a 120 ms inter-batch
+      //   yield so the UI thread and OS scheduler get regular breathing room.
+      const int kBaseCooldownMs = 120;
+      const int kThermalCooldownMs = 1500;
+      const int kBaselineSampleSize = 15;
+      double? baselineAvgMs;
 
       final failedImages = <ImageItem>[];
 
@@ -1078,33 +1068,57 @@ class ImageSearchService {
           }
         }
 
-        // Progress bar
+        // ── Progress ───────────────────────────────────────────────────────
         final total = newImages.length;
         final percent = (batchEnd / total * 100).toStringAsFixed(1);
         final elapsedSec = stopwatch.elapsed.inSeconds;
-        final avgMs = successCount > 0
-            ? (stopwatch.elapsedMilliseconds / successCount).toStringAsFixed(0)
-            : '?';
+        final currentAvgMs = successCount > 0
+            ? stopwatch.elapsedMilliseconds / successCount
+            : 0.0;
+        final avgMsStr = currentAvgMs > 0 ? currentAvgMs.toStringAsFixed(0) : '?';
         final remaining = total - batchEnd;
-        final etaSec = successCount > 0
-            ? (remaining * stopwatch.elapsedMilliseconds / successCount / 1000)
-                .toStringAsFixed(0)
+        final etaSec = currentAvgMs > 0
+            ? (remaining * currentAvgMs / 1000).toStringAsFixed(0)
             : '?';
         const barWidth = 20;
         final filled = (batchEnd / total * barWidth).round();
         final empty = barWidth - filled;
         final bar = '${'█' * filled}${'░' * empty}';
 
+        // ── Thermal throttling detection ────────────────────────────────────
+        // Lock in baseline after kBaselineSampleSize successful embeds.
+        if (baselineAvgMs == null && successCount >= kBaselineSampleSize) {
+          baselineAvgMs = currentAvgMs;
+        }
+        final isThrottling = baselineAvgMs != null &&
+            currentAvgMs > baselineAvgMs * 1.75;
+        final cooldownMs =
+            isThrottling ? kThermalCooldownMs : kBaseCooldownMs;
+
         debugPrint(
           'Embedding: [$bar] $percent%  ($successCount/$total)  '
-          '${elapsedSec}s elapsed  ~${etaSec}s remaining  ${avgMs}ms/img',
+          '${elapsedSec}s elapsed  ~${etaSec}s remaining  ${avgMsStr}ms/img'
+          '${isThrottling ? '  [thermal cooldown]' : ''}',
         );
         _emitProgress(
           IndexingPhase.embedding,
-          'Embedding images ($batchEnd/$total)…',
+          'Indexing photos ($batchEnd / $total)…',
           done: batchEnd,
           total: total,
         );
+
+        // ── Checkpoint every 50 images ──────────────────────────────────────
+        if (successCount - lastCheckpointCount >= 50) {
+          lastCheckpointCount = successCount;
+          await _annSearch.indexBatch(newlyIndexed, newEmbeddings);
+          await _saveEmbeddingCache();
+          debugPrint(
+              'ImageSearchService: Checkpoint saved at $successCount images');
+        }
+
+        // Inter-batch yield — gives UI thread and thermal governor breathing
+        // room. Extended automatically when CPU throttling is detected.
+        await Future.delayed(Duration(milliseconds: cooldownMs));
       }
 
       // If some images failed, pause and let the user decide whether to retry

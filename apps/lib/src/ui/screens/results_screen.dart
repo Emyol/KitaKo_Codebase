@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'dart:io';
 import '../../models/search_models.dart';
 import '../../services/image_search_service.dart';
@@ -19,7 +19,7 @@ class ResultsScreen extends StatefulWidget {
 }
 
 class _ResultsScreenState extends State<ResultsScreen> {
-  // ── Filter state ────────────────────────────────────────────────────────────
+  // â”€â”€ Filter state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   DateTime? _startDate;
   DateTime? _endDate;
 
@@ -31,7 +31,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   static const _maxResultsOptions = [10, 20, 50, 100];
 
-  // ── Derived ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Derived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   bool get _hasActiveFilters =>
       _startDate != null ||
@@ -54,7 +54,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
     for (int i = 0; i < widget.searchResult.images.length; i++) {
       final img = widget.searchResult.images[i];
 
-      // ── Date range ──────────────────────────────────────────────────────────
+      // â”€â”€ Date range â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (_startDate != null && img.createdAt != null) {
         if (img.createdAt!.isBefore(_startDate!)) continue;
       }
@@ -62,7 +62,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
         if (img.createdAt!.isAfter(end)) continue;
       }
 
-      // ── Relevance threshold ─────────────────────────────────────────────────
+      // â”€â”€ Relevance threshold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (minScore != null) {
         final score = widget.searchResult.scoreAt(i) ?? 0.0;
         if (score < minScore) continue;
@@ -74,33 +74,15 @@ class _ResultsScreenState extends State<ResultsScreen> {
     return out;
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   String _formatScore(double? score) {
     if (score == null) return '?';
     return '${(score * 100).toStringAsFixed(1)}%';
   }
 
-  Color _scoreColor(double? score) {
-    if (score == null) return Colors.grey;
-    if (score >= 0.20) return Colors.greenAccent;
-    if (score >= 0.10) return Colors.yellowAccent;
-    return Colors.orangeAccent;
-  }
 
-  String _formatFileSize(int? bytes) {
-    if (bytes == null) return '';
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-
-  String _formatDate(DateTime? dt) {
-    if (dt == null) return 'Any';
-    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-  }
-
-  // ── Filter bottom sheet ──────────────────────────────────────────────────────
+  // â”€â”€ Filter bottom sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _openFilterSheet() {
     // Local copies so the sheet can mutate without rebuilding the parent until
@@ -122,7 +104,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
         return StatefulBuilder(
           builder: (ctx, setSheet) {
             final isDark = Theme.of(ctx).brightness == Brightness.dark;
-            final bg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+            final bg = isDark ? const Color(0xFF161B22) : Colors.white;
             final divColor =
                 isDark ? Colors.white12 : Colors.black12;
             final labelStyle = TextStyle(
@@ -166,7 +148,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   Row(
                     children: [
                       const Icon(Icons.tune, size: 20,
-                          color: Color(0xFF4A90E2)),
+                          color: Color(0xFF3B82F6)),
                       const SizedBox(width: 8),
                       Text('Filter Results',
                           style: TextStyle(
@@ -186,13 +168,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           });
                         },
                         child: const Text('Reset',
-                            style: TextStyle(color: Color(0xFF4A90E2))),
+                            style: TextStyle(color: Color(0xFF3B82F6))),
                       ),
                     ],
                   ),
                   Divider(color: divColor),
 
-                  // ── Date Range ─────────────────────────────────────────────
+                  // â”€â”€ Date Range â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Text('Date Range', style: labelStyle),
                   const SizedBox(height: 8),
                   Row(
@@ -240,20 +222,20 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   const SizedBox(height: 16),
                   Divider(color: divColor),
 
-                  // ── Relevance Threshold ────────────────────────────────────
+                  // â”€â”€ Relevance Threshold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Row(
                     children: [
                       Text('Relevance Threshold', style: labelStyle),
                       const Spacer(),
                       Text(
                         relPct > 0
-                            ? '≥ ${(relPct * 100).round()}% of top'
+                            ? 'â‰¥ ${(relPct * 100).round()}% of top'
                             : 'Off',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                           color: relPct > 0
-                              ? const Color(0xFF4A90E2)
+                              ? const Color(0xFF3B82F6)
                               : (isDark ? Colors.white38 : Colors.black38),
                         ),
                       ),
@@ -262,17 +244,17 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   if (relPct > 0) ...[
                     const SizedBox(height: 2),
                     Text(
-                      'Top score: ${_formatScore(topScore)}  →  '
+                      'Top score: ${_formatScore(topScore)}  â†’  '
                       'Min shown: ${_formatScore(topScore * relPct)}',
                       style: subStyle,
                     ),
                   ],
                   SliderTheme(
                     data: SliderTheme.of(ctx).copyWith(
-                      activeTrackColor: const Color(0xFF4A90E2),
-                      thumbColor: const Color(0xFF4A90E2),
+                      activeTrackColor: const Color(0xFF3B82F6),
+                      thumbColor: const Color(0xFF3B82F6),
                       overlayColor:
-                          const Color(0xFF4A90E2).withValues(alpha: 0.15),
+                          const Color(0xFF3B82F6).withValues(alpha: 0.15),
                       inactiveTrackColor: isDark
                           ? Colors.white24
                           : Colors.black12,
@@ -296,7 +278,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   const SizedBox(height: 16),
                   Divider(color: divColor),
 
-                  // ── Max Results ────────────────────────────────────────────
+                  // â”€â”€ Max Results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Text('Display Count', style: labelStyle),
                   const SizedBox(height: 8),
                   Wrap(
@@ -307,7 +289,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                             selected: maxRes == n,
                             onSelected: (_) =>
                                 setSheet(() => maxRes = maxRes == n ? null : n),
-                            selectedColor: const Color(0xFF4A90E2),
+                            selectedColor: const Color(0xFF3B82F6),
                             labelStyle: TextStyle(
                               color: maxRes == n
                                   ? Colors.white
@@ -321,7 +303,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                         label: const Text('All'),
                         selected: maxRes == null,
                         onSelected: (_) => setSheet(() => maxRes = null),
-                        selectedColor: const Color(0xFF4A90E2),
+                        selectedColor: const Color(0xFF3B82F6),
                         labelStyle: TextStyle(
                           color: maxRes == null
                               ? Colors.white
@@ -336,7 +318,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   const SizedBox(height: 16),
                   Divider(color: divColor),
 
-                  // ── Location (placeholder) ────────────────────────────────
+                  // â”€â”€ Location (placeholder) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Row(
                     children: [
                       Icon(Icons.location_on_outlined,
@@ -370,12 +352,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   ),
                   const SizedBox(height: 24),
 
-                  // ── Apply ──────────────────────────────────────────────────
+                  // â”€â”€ Apply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF4A90E2),
+                        backgroundColor: const Color(0xFF3B82F6),
                         padding:
                             const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -405,7 +387,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
     );
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────────
+  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @override
   Widget build(BuildContext context) {
@@ -421,6 +403,16 @@ class _ResultsScreenState extends State<ResultsScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: const Text('Results'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            height: 1,
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            color: isDark
+                ? const Color(0x1F60A5FA)
+                : const Color(0x192563EB),
+          ),
+        ),
         actions: [
           Stack(
             alignment: Alignment.topRight,
@@ -428,7 +420,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
               IconButton(
                 icon: Icon(Icons.tune,
                     color: _hasActiveFilters
-                        ? const Color(0xFF4A90E2)
+                        ? const Color(0xFF3B82F6)
                         : Theme.of(context)
                             .appBarTheme
                             .titleTextStyle
@@ -444,7 +436,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                     width: 8,
                     height: 8,
                     decoration: const BoxDecoration(
-                      color: Color(0xFF4A90E2),
+                      color: Color(0xFF3B82F6),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -457,8 +449,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildQueryHeader(context, isDark, textColor),
-          _buildResultsCountBar(context, isDark, textColor, indices),
+          _buildQueryHeader(context, isDark, textColor, indices),
           Expanded(
             child: indices.isNotEmpty
                 ? _buildGrid(context, isDark, indices)
@@ -470,236 +461,102 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 
   Widget _buildQueryHeader(
-      BuildContext context, bool isDark, Color textColor) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.search, color: Color(0xFF4A90E2), size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '"${widget.searchResult.query}"',
-                  style: TextStyle(
-                      color: textColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          if (widget.searchResult.searchTimeMs != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Completed in ${widget.searchResult.searchTimeMs}ms',
-              style: TextStyle(
-                  color: textColor.withValues(alpha: 0.5), fontSize: 12),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+      BuildContext context, bool isDark, Color textColor, List<int> indices) {
+    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
+    final blueSoft = isDark ? const Color(0x2E3B82F6) : const Color(0xFFDBEAFE);
+    final surface = isDark ? const Color(0xFF161B22) : Colors.white;
+    final border = isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0);
+    final textMore = isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B);
 
-  Widget _buildResultsCountBar(BuildContext context, bool isDark,
-      Color textColor, List<int> indices) {
     final total = widget.searchResult.resultCount;
     final shown = indices.length;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          Text(
-            _hasActiveFilters
-                ? 'Showing $shown of $total result${total == 1 ? '' : 's'}'
-                : '$total result${total == 1 ? '' : 's'} found',
-            style: TextStyle(
-                color: textColor.withValues(alpha: 0.7), fontSize: 14),
-          ),
-          if (_hasActiveFilters) ...[
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => setState(() {
-                _startDate = null;
-                _endDate = null;
-                _relevancePct = 0.0;
-                _maxResults = null;
-              }),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4A90E2).withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.close,
-                        size: 12, color: Color(0xFF4A90E2)),
-                    const SizedBox(width: 3),
-                    const Text('Clear filters',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFF4A90E2),
-                            fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+    final subtitle = _hasActiveFilters
+        ? '$shown of $total match${total == 1 ? '' : 'es'} · filtered'
+        : '$total match${total == 1 ? '' : 'es'} · ranked by similarity';
 
-  Widget _buildGrid(
-      BuildContext context, bool isDark, List<int> indices) {
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: GridView.builder(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 0.85,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: border),
+          boxShadow: isDark
+              ? null
+              : [
+                  BoxShadow(
+                    color: const Color(0xFF0F2A4A).withValues(alpha: 0.06),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
         ),
-        itemCount: indices.length,
-        itemBuilder: (context, pos) {
-          final origIndex = indices[pos];
-          final image = widget.searchResult.images[origIndex];
-          return _buildCard(context, image, origIndex, pos, isDark);
-        },
-      ),
-    );
-  }
-
-  Widget _buildCard(BuildContext context, ImageItem image, int origIndex,
-      int displayPos, bool isDark) {
-    final score = widget.searchResult.scoreAt(origIndex);
-    return Material(
-      color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      shadowColor: Colors.black.withValues(alpha: isDark ? 0.3 : 0.1),
-      elevation: 3,
-      child: InkWell(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => DetailsScreen(
-              image: image,
-              searchService: widget.searchService,
-              imageList: widget.searchResult.images,
-              currentIndex: origIndex,
-              popCount: 2,
-            ),
-          ),
-        ),
-        borderRadius: BorderRadius.circular(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Row(
           children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(12)),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Image.file(File(image.path),
-                        fit: BoxFit.cover,
-                        cacheWidth: 256,
-                        errorBuilder: (_, _, _) =>
-                            _placeholder(image, isDark)),
-                    // Rank badge
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: _badge('#${displayPos + 1}',
-                          const Color(0xFF4A90E2), Colors.white),
-                    ),
-                    // Score badge
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.trending_up,
-                                size: 12, color: _scoreColor(score)),
-                            const SizedBox(width: 4),
-                            Text(_formatScore(score),
-                                style: TextStyle(
-                                    color: _scoreColor(score),
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            Container(
+              width: 32,
+              height: 32,
+              decoration:
+                  BoxDecoration(color: blueSoft, shape: BoxShape.circle),
+              child: Icon(
+                  widget.searchResult.query.isEmpty
+                      ? Icons.image_search
+                      : Icons.search,
+                  size: 16,
+                  color: blue),
             ),
-            Padding(
-              padding: const EdgeInsets.all(10),
+            const SizedBox(width: 10),
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(image.name,
+                  Text(
+                      widget.searchResult.query.isEmpty
+                          ? 'Similar Images'
+                          : '"${widget.searchResult.query}"',
                       style: TextStyle(
-                          color: isDark ? Colors.white : Colors.black87,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500),
+                          color: textColor,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
                   Row(
                     children: [
-                      Text(_formatFileSize(image.sizeBytes),
-                          style: TextStyle(
-                              color:
-                                  (isDark ? Colors.white : Colors.black87)
-                                      .withValues(alpha: 0.5),
-                              fontSize: 11)),
-                      if (image.createdAt != null) ...[
-                        Text('  ·  ',
+                      Expanded(
+                        child: Text(subtitle,
                             style: TextStyle(
-                                color: (isDark
-                                        ? Colors.white
-                                        : Colors.black87)
-                                    .withValues(alpha: 0.3),
-                                fontSize: 11)),
-                        Text(_formatDate(image.createdAt),
-                            style: TextStyle(
-                                color: (isDark
-                                        ? Colors.white
-                                        : Colors.black87)
-                                    .withValues(alpha: 0.4),
-                                fontSize: 11)),
-                      ],
+                                color: textMore, fontSize: 11, height: 1.4)),
+                      ),
+                      if (_hasActiveFilters)
+                        GestureDetector(
+                          onTap: () => setState(() {
+                            _startDate = null;
+                            _endDate = null;
+                            _relevancePct = 0.0;
+                            _maxResults = null;
+                          }),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: blue.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.close, size: 10, color: blue),
+                                const SizedBox(width: 2),
+                                Text('Clear',
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        color: blue,
+                                        fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ],
@@ -711,21 +568,115 @@ class _ResultsScreenState extends State<ResultsScreen> {
     );
   }
 
-  Widget _badge(String label, Color bg, Color fg) {
+
+  Widget _buildGrid(BuildContext context, bool isDark, List<int> indices) {
+    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+      child: GridView.builder(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 6,
+          mainAxisSpacing: 6,
+          childAspectRatio: 1,
+        ),
+        itemCount: indices.length,
+        itemBuilder: (context, pos) {
+          final origIndex = indices[pos];
+          final image = widget.searchResult.images[origIndex];
+          final score = widget.searchResult.scoreAt(origIndex);
+          final isBest = pos == 0;
+          return Material(
+            color: isDark ? const Color(0xFF1A2030) : const Color(0xFFE2EAF4),
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => DetailsScreen(
+                    image: image,
+                    searchService: widget.searchService,
+                    imageList: widget.searchResult.images,
+                    currentIndex: origIndex,
+                    popCount: 2,
+                  ),
+                ),
+              ),
+              borderRadius: BorderRadius.circular(14),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.file(File(image.path),
+                        fit: BoxFit.cover, cacheWidth: 256,
+                        errorBuilder: (_, _, _) => _placeholder(image, isDark)),
+                    // Rank / Best match badge
+                    Positioned(
+                      top: 6, left: 6,
+                      child: isBest
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(color: blue, borderRadius: BorderRadius.circular(999)),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                                Icon(Icons.star_rounded, size: 11, color: Colors.white),
+                                SizedBox(width: 4),
+                                Text('Best match', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+                              ]),
+                            )
+                          : Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                              decoration: BoxDecoration(color: blue, borderRadius: BorderRadius.circular(999)),
+                              child: Text('#${pos + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+                            ),
+                    ),
+                    // Confidence bars (not for best match)
+                    if (!isBest && score != null)
+                      Positioned(
+                        bottom: 6, right: 6,
+                        child: _buildConfidenceBars(score, isDark),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildConfidenceBars(double score, bool isDark) {
+    final filled = score >= 0.85 ? 3 : score >= 0.70 ? 2 : 1;
+    final barColor = isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB);
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
       decoration: BoxDecoration(
-          color: bg, borderRadius: BorderRadius.circular(12)),
-      child: Text(label,
-          style: TextStyle(
-              color: fg, fontSize: 12, fontWeight: FontWeight.bold)),
+        color: const Color(0xFF0F1726).withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (int i = 0; i < 3; i++) ...[
+            if (i > 0) const SizedBox(width: 2),
+            Container(
+              width: 3,
+              height: [6.0, 9.0, 12.0][i],
+              decoration: BoxDecoration(
+                color: i < filled ? barColor : Colors.white.withValues(alpha: 0.30),
+                borderRadius: BorderRadius.circular(1),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
   Widget _placeholder(ImageItem image, bool isDark) {
     return Container(
-      color: isDark ? const Color(0xFF3A3A3A) : const Color(0xFFE0E0E0),
+      color: isDark ? const Color(0xFF222A36) : const Color(0xFFE2EAF4),
       child: Center(
         child: Icon(Icons.image_outlined,
             color: isDark
@@ -748,13 +699,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
             height: 100,
             decoration: BoxDecoration(
               border: Border.all(
-                  color: const Color(0xFF1E3A5F), width: 2),
+                  color: isDark ? const Color(0xFF1F2733) : const Color(0xFFBFD3E8), width: 2),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Icon(
                 isFiltered ? Icons.filter_alt_off : Icons.search_off,
                 size: 48,
-                color: const Color(0xFF4A90E2)),
+                color: const Color(0xFF3B82F6)),
           ),
           const SizedBox(height: 20),
           Text(
@@ -786,7 +737,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
               icon: const Icon(Icons.filter_alt_off),
               label: const Text('Clear Filters'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A90E2),
+                backgroundColor: const Color(0xFF3B82F6),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(
                     horizontal: 24, vertical: 12),
@@ -800,7 +751,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
               icon: const Icon(Icons.search),
               label: const Text('New Search'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A90E2),
+                backgroundColor: const Color(0xFF3B82F6),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(
                     horizontal: 24, vertical: 12),
@@ -814,7 +765,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 }
 
-// ── Small helpers ──────────────────────────────────────────────────────────────
+// â”€â”€ Small helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _DateButton extends StatelessWidget {
   final String label;
@@ -846,12 +797,12 @@ class _DateButton extends StatelessWidget {
             const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
         side: BorderSide(
             color: hasDate
-                ? const Color(0xFF4A90E2)
+                ? const Color(0xFF3B82F6)
                 : (isDark ? Colors.white24 : Colors.black26)),
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10)),
         backgroundColor: hasDate
-            ? const Color(0xFF4A90E2).withValues(alpha: 0.08)
+            ? const Color(0xFF3B82F6).withValues(alpha: 0.08)
             : Colors.transparent,
       ),
       child: Row(
@@ -860,7 +811,7 @@ class _DateButton extends StatelessWidget {
           Icon(Icons.calendar_today,
               size: 14,
               color: hasDate
-                  ? const Color(0xFF4A90E2)
+                  ? const Color(0xFF3B82F6)
                   : (isDark ? Colors.white38 : Colors.black38)),
           const SizedBox(width: 6),
           Flexible(
@@ -869,7 +820,7 @@ class _DateButton extends StatelessWidget {
               style: TextStyle(
                   fontSize: 12,
                   color: hasDate
-                      ? const Color(0xFF4A90E2)
+                      ? const Color(0xFF3B82F6)
                       : (isDark ? Colors.white54 : Colors.black54),
                   fontWeight: hasDate
                       ? FontWeight.w600
@@ -882,7 +833,7 @@ class _DateButton extends StatelessWidget {
             GestureDetector(
               onTap: onClear,
               child: const Icon(Icons.close,
-                  size: 14, color: Color(0xFF4A90E2)),
+                  size: 14, color: Color(0xFF3B82F6)),
             ),
           ],
         ],

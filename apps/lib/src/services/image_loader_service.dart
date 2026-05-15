@@ -1,77 +1,22 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:photo_manager/photo_manager.dart';
 import '../models/search_models.dart';
 
-/// Identifier for a test dataset directory.
-class TestDataset {
-  /// Directory name under `test_datasets/`.
-  final String dirName;
-
-  /// Human-readable label for UI.
-  final String label;
-
-  const TestDataset({required this.dirName, required this.label});
-
-  static const personal = TestDataset(
-    dirName: 'personal_1k',
-    label: 'Personal',
-  );
-  static const scraped = TestDataset(
-    dirName: 'scraped_1k',
-    label: 'Scraped',
-  );
-
-  static const all = <TestDataset>[personal, scraped];
-
-  static TestDataset? byDirName(String name) {
-    for (final d in all) {
-      if (d.dirName == name) return d;
-    }
-    return null;
-  }
-
-  /// Prefix used to namespace ImageItem ids belonging to this dataset.
-  /// e.g. `personal_1k_IMG_0001.jpg`
-  String idPrefix() => '${dirName}_';
-
-  @override
-  String toString() => 'TestDataset($dirName)';
-}
-
-/// Service for loading and managing device images from the test datasets.
+/// Service for loading and managing device images from the real photo gallery.
 ///
-/// Two test sets are supported in parallel — `personal_1k` and `scraped_1k`.
-/// Both are discovered and loaded on init so the search index contains
-/// embeddings for both. The "active" dataset (persisted in SharedPreferences)
-/// controls which subset is returned by [getActiveDatasetImages] and used
-/// for search-time filtering by [ImageSearchService].
-///
-/// Image IDs are namespaced as `<datasetDir>_<filename>`, e.g.
-/// `personal_1k_IMG_0001.jpg`. The prefix is what the dataset toggle
-/// filters on.
+/// Uses [photo_manager] to enumerate all images on the device. Permissions are
+/// requested on [initialize]. Image IDs are the stable asset IDs provided by
+/// the platform photo library.
 class ImageLoaderService {
-  static const String _kActiveDatasetPrefKey = 'active_test_dataset';
-
-  /// All loaded images across all discovered datasets.
+  /// All loaded images across the device gallery.
   final List<ImageItem> _imageCache = [];
 
-  /// (id -> File) for every image found.
-  final Map<String, File> _testFileCache = {};
-
-  /// Which dataset each id belongs to (id -> dirName).
-  final Map<String, String> _idToDataset = {};
-
-  /// Datasets that were found on disk during init (their dirName).
-  final Set<String> _availableDatasets = {};
+  /// asset ID → AssetEntity (kept for efficient thumbnail generation).
+  final Map<String, AssetEntity> _assetCache = {};
 
   bool _isInitialized = false;
-
-  /// Currently selected dataset (dirName). Null until [initialize] runs.
-  String? _activeDataset;
 
   static const List<String> _supportedExtensions = [
     '.jpg',
@@ -82,46 +27,63 @@ class ImageLoaderService {
     '.webp',
   ];
 
-  /// Initialize: discover both datasets, build the file cache, restore
-  /// active-dataset preference. Returns `true` on success (always — failures
-  /// are logged but don't throw).
+  /// Initialize: request permission and enumerate all gallery images.
+  /// Returns `true` if permission was granted, `false` if denied.
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
     try {
-      for (final dataset in TestDataset.all) {
-        final dir = await _resolveDatasetDirectory(dataset);
-        if (dir == null) continue;
-
-        final imageFiles = await _listImageFiles(dir);
-        if (imageFiles.isEmpty) continue;
-
-        _availableDatasets.add(dataset.dirName);
-        for (final file in imageFiles) {
-          final name = file.uri.pathSegments.last;
-          final id = '${dataset.idPrefix()}$name';
-          _testFileCache[id] = file;
-          _idToDataset[id] = dataset.dirName;
-        }
-        debugPrint(
-          'ImageLoaderService: ${dataset.dirName} → '
-          '${imageFiles.length} images at ${dir.path}',
-        );
+      final PermissionState ps =
+          await PhotoManager.requestPermissionExtend();
+      if (!ps.hasAccess) {
+        debugPrint('ImageLoaderService: Photo library access denied');
+        _isInitialized = true;
+        return false;
       }
 
-      if (_availableDatasets.isEmpty) {
-        debugPrint(
-          'ImageLoaderService: No test datasets found. See '
-          'docs/development/TEST_DATASETS.md for setup. '
-          'Expected dirs: test_datasets/personal_1k or test_datasets/scraped_1k.',
-        );
-      }
-
-      _activeDataset = await _restoreActiveDataset();
-      debugPrint(
-        'ImageLoaderService: Total ${_testFileCache.length} images, '
-        'active=$_activeDataset, available=$_availableDatasets',
+      // Get the "all images" album sorted newest-first at the platform level.
+      // OrderOption on createDate (asc: false) means page 0 contains the most
+      // recently created images — so the first 200 assets loaded are today's
+      // photos, and the gallery renders the correct date sections immediately
+      // without any secondary sort in the UI layer.
+      final albums = await PhotoManager.getAssetPathList(
+        type: RequestType.image,
+        hasAll: true,
+        onlyAll: true,
+        filterOption: FilterOptionGroup(
+          orders: [
+            const OrderOption(
+              type: OrderOptionType.createDate,
+              asc: false,
+            ),
+          ],
+        ),
       );
+
+      if (albums.isEmpty) {
+        debugPrint('ImageLoaderService: No photo albums found on device');
+        _isInitialized = true;
+        return true;
+      }
+
+      final allAlbum = albums.first;
+      final count = await allAlbum.assetCountAsync;
+      debugPrint('ImageLoaderService: Device gallery has $count images');
+
+      // Load assets in pages to avoid OOM on large galleries.
+      const pageSize = 200;
+      int loaded = 0;
+      for (int start = 0; start < count; start += pageSize) {
+        final end = (start + pageSize).clamp(0, count);
+        final assets =
+            await allAlbum.getAssetListRange(start: start, end: end);
+        for (final asset in assets) {
+          _assetCache[asset.id] = asset;
+        }
+        loaded += assets.length;
+      }
+
+      debugPrint('ImageLoaderService: Indexed $loaded images from gallery');
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to initialize: $e');
     }
@@ -130,99 +92,102 @@ class ImageLoaderService {
     return true;
   }
 
-  /// Load **all** images from every discovered dataset.
+  /// Resolves a list of [AssetEntity] objects into [ImageItem]s concurrently.
+  /// All assets in the batch are resolved in parallel to minimise platform-
+  /// channel round-trip latency.
+  Future<List<ImageItem>> _resolveAssets(List<AssetEntity> assets) async {
+    final results = await Future.wait(
+      assets.map((asset) async {
+        try {
+          final file = await asset.file;
+          if (file == null || !isImageSupported(file.path)) return null;
+          return ImageItem(
+            id: asset.id,
+            path: file.path,
+            createdAt: asset.createDateTime,
+            modifiedAt: asset.modifiedDateTime,
+            sizeBytes: await file.length(),
+            width: asset.width,
+            height: asset.height,
+          );
+        } catch (e) {
+          debugPrint('ImageLoaderService: Skipped asset ${asset.id}: $e');
+          return null;
+        }
+      }),
+    );
+    return results.whereType<ImageItem>().toList();
+  }
+
+  /// Load all images from the device gallery as [ImageItem] objects.
   ///
-  /// Used by the indexing pipeline so embeddings are cached for both sets
-  /// in a single pass at startup. Search-time filtering (via the active
-  /// dataset) is applied by [ImageSearchService].
+  /// File paths and metadata are resolved in parallel on first call and cached.
   Future<List<ImageItem>> loadDeviceImages() async {
     if (!_isInitialized) {
       throw StateError(
-        'ImageLoaderService not initialized. Call initialize() first.',
-      );
+          'ImageLoaderService not initialized. Call initialize() first.');
     }
-    if (_imageCache.isNotEmpty) {
-      return List.unmodifiable(_imageCache);
-    }
-    for (final entry in _testFileCache.entries) {
-      final stat = await entry.value.stat();
-      _imageCache.add(ImageItem(
-        id: entry.key,
-        path: entry.value.path,
-        createdAt: stat.changed,
-        modifiedAt: stat.modified,
-        sizeBytes: stat.size,
-      ));
-    }
+    if (_imageCache.isNotEmpty) return List.unmodifiable(_imageCache);
+
+    final resolved = await _resolveAssets(_assetCache.values.toList());
+    _imageCache.addAll(resolved);
+
     debugPrint('ImageLoaderService: Loaded ${_imageCache.length} images');
     return List.unmodifiable(_imageCache);
   }
 
-  /// Get only the images belonging to the active dataset (or empty if none).
-  List<ImageItem> getActiveDatasetImages() {
-    final active = _activeDataset;
-    if (active == null) return const [];
-    return _imageCache
-        .where((img) => _idToDataset[img.id] == active)
-        .toList(growable: false);
-  }
-
-  /// Whether [imageId] belongs to the active dataset.
-  bool isInActiveDataset(String imageId) {
-    final active = _activeDataset;
-    if (active == null) return true; // No filter when no active set.
-    return _idToDataset[imageId] == active;
-  }
-
-  /// Currently active dataset dirName (e.g. `personal_1k`), or null.
-  String? get activeDataset => _activeDataset;
-
-  /// Datasets that were found on disk during init.
-  Set<String> get availableDatasets => Set.unmodifiable(_availableDatasets);
-
-  /// Switch the active dataset and persist the choice.
-  /// Returns true if the dataset was found and is now active.
-  Future<bool> setActiveDataset(String dirName) async {
-    if (!_availableDatasets.contains(dirName)) {
-      debugPrint(
-        'ImageLoaderService: Cannot activate $dirName — not found on disk',
-      );
-      return false;
-    }
-    _activeDataset = dirName;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_kActiveDatasetPrefKey, dirName);
-    } catch (e) {
-      debugPrint('ImageLoaderService: Failed to persist active dataset: $e');
-    }
-    return true;
-  }
-
-  Future<Uint8List?> loadThumbnail(String imageId) async {
-    final file = _testFileCache[imageId];
-    if (file == null) return null;
-    try {
-      return await file.readAsBytes();
-    } catch (e) {
-      debugPrint('ImageLoaderService: Failed to load thumbnail for $imageId: $e');
-      return null;
-    }
-  }
-
-  /// Loads an image pre-downscaled to at most 512×512 RGBA using the
-  /// platform JPEG decoder, avoiding the ~48 MB buffer cost of decoding
-  /// a full-resolution phone photo before the 224×224 model resize.
+  /// Loads images progressively, calling [onBatch] with the growing cumulative
+  /// list after each batch resolves. Batch schedule: 50 → 100 → 200 → 200…
   ///
-  /// Returns null if the file is missing or cannot be decoded.
+  /// Because assets are pre-sorted newest-first, the very first batch contains
+  /// today's photos and the gallery is usable in milliseconds.
+  Future<void> loadDeviceImagesProgressive({
+    required void Function(List<ImageItem> cumulative) onBatch,
+  }) async {
+    if (!_isInitialized) {
+      throw StateError(
+          'ImageLoaderService not initialized. Call initialize() first.');
+    }
+    if (_imageCache.isNotEmpty) {
+      onBatch(List.unmodifiable(_imageCache));
+      return;
+    }
+
+    // Batch sizes: small first so the grid renders quickly, then larger
+    // to amortise the overhead of multiple round-trips.
+    const batchSchedule = [50, 100, 200];
+    const defaultBatch  = 200;
+
+    final allAssets = _assetCache.values.toList();
+    int cursor   = 0;
+    int batchIdx = 0;
+
+    while (cursor < allAssets.length) {
+      final batchSize = batchIdx < batchSchedule.length
+          ? batchSchedule[batchIdx]
+          : defaultBatch;
+      final end     = (cursor + batchSize).clamp(0, allAssets.length);
+      final batch   = allAssets.sublist(cursor, end);
+      final resolved = await _resolveAssets(batch);
+      _imageCache.addAll(resolved);
+      onBatch(List.unmodifiable(_imageCache));
+      cursor   = end;
+      batchIdx++;
+    }
+
+    debugPrint(
+        'ImageLoaderService: Progressive load complete — ${_imageCache.length} images');
+  }
+
+  /// Loads an image pre-downscaled to at most 512×512 RGBA via the platform
+  /// JPEG decoder (DCT scaling), avoiding the ~48 MB buffer cost of a
+  /// full-resolution decode before the 224×224 model resize.
   Future<({Uint8List rgba, int width, int height})?> loadResizedForEmbedding(
       String imageId) async {
-    final file = _testFileCache[imageId];
-    if (file == null) return null;
+    final item = getImageById(imageId);
+    if (item == null) return null;
     try {
-      final bytes = await file.readAsBytes();
-      // targetWidth/targetHeight hint lets the platform JPEG decoder use DCT
-      // scaling — it never allocates the full-res buffer at all.
+      final bytes = await File(item.path).readAsBytes();
       final codec = await ui.instantiateImageCodec(
         bytes,
         targetWidth: 512,
@@ -243,14 +208,27 @@ class ImageLoaderService {
     }
   }
 
+  Future<Uint8List?> loadThumbnail(String imageId) async {
+    final asset = _assetCache[imageId];
+    if (asset == null) return null;
+    try {
+      return await asset.thumbnailDataWithSize(
+          const ThumbnailSize(256, 256));
+    } catch (e) {
+      debugPrint(
+          'ImageLoaderService: Failed to load thumbnail for $imageId: $e');
+      return null;
+    }
+  }
+
   Future<Uint8List?> loadImageBytes(String imageId) async {
-    final file = _testFileCache[imageId];
-    if (file == null) {
+    final item = getImageById(imageId);
+    if (item == null) {
       debugPrint('ImageLoaderService: Image not found for $imageId');
       return null;
     }
     try {
-      return await file.readAsBytes();
+      return await File(item.path).readAsBytes();
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to load image for $imageId: $e');
       return null;
@@ -259,9 +237,7 @@ class ImageLoaderService {
 
   Future<ImageItem> getImageWithThumbnail(String imageId) async {
     final image = getImageById(imageId);
-    if (image == null) {
-      throw StateError('Image not found: $imageId');
-    }
+    if (image == null) throw StateError('Image not found: $imageId');
     if (image.thumbnail != null) return image;
 
     final thumbnail = await loadThumbnail(imageId);
@@ -295,25 +271,16 @@ class ImageLoaderService {
 
   void clearCache() {
     _imageCache.clear();
-    _testFileCache.clear();
-    _idToDataset.clear();
-    _availableDatasets.clear();
+    _assetCache.clear();
   }
 
-  /// Drop only the in-memory thumbnail bytes attached to cached items, but
-  /// keep the [ImageItem] metadata and (id → File) map intact so search
-  /// and gallery rendering keep working. The next render of a thumbnail
-  /// will re-read from disk.
-  ///
-  /// Used by the lifecycle observer when Android signals memory pressure.
-  /// 2005 cached items × ~2 MB raw thumbnail = ~4 GB worst case; this
-  /// reclaims that without invalidating the index.
+  /// Drop in-memory thumbnail bytes while keeping metadata and asset refs
+  /// intact. Called on Android memory pressure.
   int clearThumbnailBytes() {
     int cleared = 0;
     for (var i = 0; i < _imageCache.length; i++) {
       final item = _imageCache[i];
       if (item.thumbnail != null) {
-        // copyWith uses `??` so passing null falls through — rebuild explicitly.
         _imageCache[i] = ImageItem(
           id: item.id,
           path: item.path,
@@ -327,7 +294,8 @@ class ImageLoaderService {
       }
     }
     if (cleared > 0) {
-      debugPrint('ImageLoaderService: Cleared $cleared thumbnail buffers');
+      debugPrint(
+          'ImageLoaderService: Cleared $cleared thumbnail buffers');
     }
     return cleared;
   }
@@ -335,122 +303,5 @@ class ImageLoaderService {
   void dispose() {
     clearCache();
     _isInitialized = false;
-  }
-
-  /// Backwards-compat: any of the discovered datasets.
-  bool get isTestDataset => _availableDatasets.isNotEmpty;
-
-  // ── Discovery ───────────────────────────────────────────────────────────
-
-  /// Find a dataset directory across desktop + Android paths.
-  /// Returns the first non-empty match, or null.
-  Future<Directory?> _resolveDatasetDirectory(TestDataset dataset) async {
-    // 1. Desktop / dev: walk up from Directory.current to find a sibling
-    //    `test_datasets/<dirName>` folder. Covers `flutter run -d windows`
-    //    from apps/kitako_app, and also unit-test runs from package roots.
-    if (!Platform.isAndroid && !Platform.isIOS) {
-      final repoRelative = await _findRepoRelativeDir(dataset.dirName);
-      if (repoRelative != null) return repoRelative;
-    }
-
-    // 2. Android: prefer external files dir, then ADB staging.
-    if (Platform.isAndroid) {
-      try {
-        final extDir = await getExternalStorageDirectory();
-        if (extDir != null) {
-          final extTarget = Directory(
-            '${extDir.path}/test_datasets/${dataset.dirName}',
-          );
-          // If empty/missing, try copying from ADB staging.
-          if (!await extTarget.exists() || await _isDirEmpty(extTarget)) {
-            final adbStaged = Directory(
-              '/data/local/tmp/test_datasets/${dataset.dirName}',
-            );
-            if (await adbStaged.exists() && !await _isDirEmpty(adbStaged)) {
-              await extTarget.create(recursive: true);
-              int copied = 0;
-              await for (final entity in adbStaged.list()) {
-                if (entity is File && isImageSupported(entity.path)) {
-                  final name = entity.uri.pathSegments.last;
-                  await entity.copy('${extTarget.path}/$name');
-                  copied++;
-                }
-              }
-              debugPrint(
-                'ImageLoaderService: Copied $copied images from '
-                '${adbStaged.path} → ${extTarget.path}',
-              );
-            }
-          }
-          if (await extTarget.exists() && !await _isDirEmpty(extTarget)) {
-            return extTarget;
-          }
-          // Fall back to direct ADB staging if external copy didn't happen.
-          final adbDirect = Directory(
-            '/data/local/tmp/test_datasets/${dataset.dirName}',
-          );
-          if (await adbDirect.exists() && !await _isDirEmpty(adbDirect)) {
-            return adbDirect;
-          }
-        }
-      } catch (e) {
-        debugPrint('ImageLoaderService: Android dataset discovery failed: $e');
-      }
-    }
-
-    return null;
-  }
-
-  /// Walk up to 5 parent levels from `Directory.current` looking for a
-  /// `test_datasets/<dirName>` folder. Used on desktop where the working
-  /// directory is the Flutter project (`apps/kitako_app`).
-  Future<Directory?> _findRepoRelativeDir(String dirName) async {
-    Directory current = Directory.current;
-    for (int i = 0; i < 6; i++) {
-      final candidate = Directory('${current.path}/test_datasets/$dirName');
-      if (await candidate.exists() && !await _isDirEmpty(candidate)) {
-        return candidate;
-      }
-      final parent = current.parent;
-      if (parent.path == current.path) break;
-      current = parent;
-    }
-    return null;
-  }
-
-  Future<List<File>> _listImageFiles(Directory dir) async {
-    final out = <File>[];
-    await for (final entity in dir.list()) {
-      if (entity is File && isImageSupported(entity.path)) {
-        out.add(entity);
-      }
-    }
-    return out;
-  }
-
-  Future<bool> _isDirEmpty(Directory dir) async {
-    await for (final _ in dir.list()) {
-      return false;
-    }
-    return true;
-  }
-
-  /// Restore the active-dataset preference, falling back to the first
-  /// available dataset if no preference is set or the saved dataset is
-  /// missing on disk.
-  Future<String?> _restoreActiveDataset() async {
-    String? saved;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      saved = prefs.getString(_kActiveDatasetPrefKey);
-    } catch (e) {
-      debugPrint('ImageLoaderService: Failed to read prefs: $e');
-    }
-    if (saved != null && _availableDatasets.contains(saved)) return saved;
-    if (_availableDatasets.contains(TestDataset.personal.dirName)) {
-      return TestDataset.personal.dirName;
-    }
-    if (_availableDatasets.isNotEmpty) return _availableDatasets.first;
-    return null;
   }
 }

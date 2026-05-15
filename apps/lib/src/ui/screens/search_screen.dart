@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -6,16 +6,17 @@ import '../../services/image_search_service.dart';
 import '../../services/search_history_service.dart';
 import '../../models/search_models.dart';
 import 'results_screen.dart';
-import 'details_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   final ImageSearchService searchService;
   final SearchHistoryService historyService;
+  final VoidCallback? onSettingsTap;
 
   const SearchScreen({
     super.key,
     required this.searchService,
     required this.historyService,
+    this.onSettingsTap,
   });
 
   @override
@@ -27,10 +28,9 @@ class _SearchScreenState extends State<SearchScreen> {
   final FocusNode _focusNode = FocusNode();
   SearchHistoryService get _historyService => widget.historyService;
   StreamSubscription<SearchState>? _searchSubscription;
-  StreamSubscription<List<ImageItem>>? _imagesLoadedSubscription;
   late SearchState _currentSearchState;
-  List<ImageItem> _indexedImages = [];
-  bool _isLoadingGallery = false;
+  bool _hasNavigated = false;
+
 
   @override
   void initState() {
@@ -49,29 +49,27 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     // Listen to search state changes
-    _searchSubscription = widget.searchService.searchStateStream.listen((
-      state,
-    ) {
-      if (mounted) {
-        setState(() {
-          _currentSearchState = state;
+    _searchSubscription = widget.searchService.searchStateStream.listen((state) {
+      if (!mounted) return;
+      setState(() => _currentSearchState = state);
+      // Auto-navigate to ResultsScreen on any search success
+      if (state.status == SearchStatus.success &&
+          state.result != null &&
+          !_hasNavigated) {
+        _hasNavigated = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _navigateToResults().then((_) {
+              if (mounted) setState(() => _hasNavigated = false);
+            });
+          }
         });
+      }
+      if (state.status == SearchStatus.searching) {
+        _hasNavigated = false;
       }
     });
 
-    // Listen for when images are loaded/indexed
-    _imagesLoadedSubscription = widget.searchService.imagesLoadedStream.listen((
-      images,
-    ) {
-      if (mounted) {
-        setState(() {
-          _indexedImages = images;
-        });
-      }
-    });
-
-    // Load initial indexed images if already available
-    _indexedImages = widget.searchService.getAllImages();
   }
 
   void _onSearchTextChanged() => setState(() {});
@@ -79,7 +77,6 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void dispose() {
     _searchSubscription?.cancel();
-    _imagesLoadedSubscription?.cancel();
     _searchController.removeListener(_onSearchTextChanged);
     _searchController.dispose();
     _focusNode.dispose();
@@ -97,41 +94,6 @@ class _SearchScreenState extends State<SearchScreen> {
   void _runHistoryQuery(String query) {
     _searchController.text = query;
     _performSearch();
-  }
-
-  /// Tappable suggestion chips shown when a query produces weak or no results.
-  Widget _buildSuggestionChips(List<String> suggestions, String label) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.6),
-                ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: suggestions
-                .map(
-                  (s) => ActionChip(
-                    avatar: const Icon(Icons.search, size: 16),
-                    label: Text(s),
-                    onPressed: () => _runHistoryQuery(s),
-                  ),
-                )
-                .toList(),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -155,9 +117,7 @@ class _SearchScreenState extends State<SearchScreen> {
               color: Theme.of(context).appBarTheme.titleTextStyle?.color,
               size: 28,
             ),
-            onPressed: () {
-              // Settings action
-            },
+            onPressed: widget.onSettingsTap,
           ),
           const SizedBox(width: 8),
         ],
@@ -166,111 +126,116 @@ class _SearchScreenState extends State<SearchScreen> {
         children: [
           // Search Results or Empty State
           Expanded(child: _buildSearchContent()),
-          // Search Bar with Keyboard
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFF5F5F5),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(isDark ? 0.3 : 0.1),
-                  blurRadius: 10,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-            ),
-            child: SafeArea(
+          // Active search bar — pill with blue ring + Photo chip + external send button
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
               child: Row(
                 children: [
+                  // Pill
                   Expanded(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      height: 56,
                       decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
+                        color: isDark ? const Color(0xFF161B22) : Colors.white,
+                        borderRadius: BorderRadius.circular(28),
                         border: Border.all(
-                          color: const Color(0xFF4A90E2),
-                          width: 1,
+                          color: isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB),
+                          width: 1.5,
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB)).withValues(alpha: 0.35),
+                            blurRadius: 0, spreadRadius: 4,
+                          ),
+                        ],
                       ),
                       child: Row(
                         children: [
-                          Icon(
-                            Icons.search,
-                            color: isDark
-                                ? const Color(0xFF666666)
-                                : const Color(0xFF999999),
-                            size: 24,
-                          ),
                           const SizedBox(width: 12),
+                          Icon(Icons.search, size: 20,
+                              color: isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB)),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: TextField(
                               controller: _searchController,
                               focusNode: _focusNode,
                               style: TextStyle(
-                                color: isDark ? Colors.white : Colors.black87,
-                                fontSize: 16,
+                                color: isDark ? Colors.white : const Color(0xFF0F172A),
+                                fontSize: 15,
                               ),
                               decoration: InputDecoration(
-                                hintText: 'Search...',
+                                hintText: 'Search photos in Taglish…',
                                 border: InputBorder.none,
                                 hintStyle: TextStyle(
-                                  color: isDark
-                                      ? const Color(0xFF666666)
-                                      : const Color(0xFF999999),
-                                  fontSize: 16,
+                                  color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF94A3B8),
+                                  fontSize: 15,
                                 ),
                               ),
                               onSubmitted: (_) => _performSearch(),
                             ),
                           ),
                           if (_searchController.text.isNotEmpty)
-                            IconButton(
-                              icon: Icon(
-                                Icons.clear,
-                                color: isDark
-                                    ? const Color(0xFF666666)
-                                    : const Color(0xFF999999),
-                                size: 20,
-                              ),
-                              onPressed: () {
+                            GestureDetector(
+                              onTap: () {
                                 _searchController.clear();
                                 widget.searchService.clearSearch();
                               },
+                              child: Container(
+                                width: 26, height: 26,
+                                decoration: BoxDecoration(
+                                  color: isDark ? const Color(0xFF1A2030) : const Color(0xFFEEF3FA),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(Icons.close, size: 14,
+                                    color: isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B)),
+                              ),
                             ),
+                          // Photo chip inside pill
+                          Container(
+                            margin: const EdgeInsets.only(right: 8, left: 6),
+                            padding: const EdgeInsets.fromLTRB(8, 6, 10, 6),
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0x243B82F6) : const Color(0xFFDBEAFE),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                GestureDetector(
+                                  onTap: _pickImageForSearch,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.image_outlined, size: 14,
+                                          color: isDark ? const Color(0xFF93C5FD) : const Color(0xFF1D4ED8)),
+                                      const SizedBox(width: 4),
+                                      Text('Photo',
+                                          style: TextStyle(
+                                            fontSize: 12, fontWeight: FontWeight.w600,
+                                            color: isDark ? const Color(0xFF93C5FD) : const Color(0xFF1D4ED8),
+                                          )),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  // Image picker button for image-to-image search
-                  Container(
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: const Color(0xFF4A90E2).withOpacity(0.5),
-                        width: 1,
+                  const SizedBox(width: 10),
+                  // Send button — outside pill, solid circle
+                  GestureDetector(
+                    onTap: _performSearch,
+                    child: Container(
+                      width: 56, height: 56,
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB),
+                        shape: BoxShape.circle,
                       ),
-                    ),
-                    child: IconButton(
-                      icon: Icon(
-                        Icons.image_search,
-                        color: const Color(0xFF4A90E2),
-                      ),
-                      onPressed: _pickImageForSearch,
-                      tooltip: 'Search by image',
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF4A90E2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: IconButton(
-                      icon: const Icon(Icons.send, color: Colors.white),
-                      onPressed: _performSearch,
+                      child: const Icon(Icons.send, color: Colors.white, size: 22),
                     ),
                   ),
                 ],
@@ -306,7 +271,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
               ),
             const CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A90E2)),
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
             ),
             const SizedBox(height: 16),
             Text(
@@ -329,7 +294,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: Text(
                   'Normalized: "${_currentSearchState.normalizedQuery}"',
                   style: TextStyle(
-                    color: const Color(0xFF4A90E2).withOpacity(0.8),
+                    color: const Color(0xFF3B82F6).withValues(alpha: 0.8),
                     fontSize: 12,
                     fontStyle: FontStyle.italic,
                   ),
@@ -345,285 +310,117 @@ class _SearchScreenState extends State<SearchScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 120,
-              height: 120,
-              decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFF1E3A5F), width: 3),
-                borderRadius: BorderRadius.circular(20),
-              ),
+            // 140×140 illustrated state
+            SizedBox(
+              width: 140, height: 140,
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  const Icon(
-                    Icons.search_off,
-                    size: 50,
-                    color: Color(0xFF4A90E2),
+                  // Dashed outer ring
+                  Container(
+                    width: 124, height: 124,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: (isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB)).withValues(alpha: 0.4),
+                        width: 1.5,
+                      ),
+                    ),
                   ),
+                  // Inner card
+                  Container(
+                    width: 96, height: 96,
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF161B22) : Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB)).withValues(alpha: 0.18),
+                          blurRadius: 24, spreadRadius: 0, offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Icon(Icons.search, size: 44,
+                          color: isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB)),
+                    ),
+                  ),
+                  // Blue circle with X at bottom-right
                   Positioned(
-                    bottom: 10,
-                    right: 10,
+                    bottom: 14, right: 14,
                     child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF4A90E2),
+                      width: 28, height: 28,
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
-                        Icons.close,
-                        size: 20,
-                        color: Colors.white,
-                      ),
+                      child: const Icon(Icons.close, size: 14, color: Colors.white),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-            Text(
-              'No result has been found',
-              style: TextStyle(
-                color: textColor,
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Try searching for something else',
-              style: TextStyle(color: textColor.withOpacity(0.6), fontSize: 14),
-            ),
-            if (_currentSearchState.suggestions?.isNotEmpty == true) ...[
-              const SizedBox(height: 24),
-              _buildSuggestionChips(
-                _currentSearchState.suggestions!,
-                'Try instead:',
-              ),
-            ],
-          ],
-        ),
-      );
-    }
-
-    if (_currentSearchState.status == SearchStatus.success) {
-      final results = _currentSearchState.result?.images ?? [];
-      final hasNormalization = !_currentSearchState.isImageSearch &&
-          _currentSearchState.normalizedQuery != null &&
-          _currentSearchState.normalizedQuery != _currentSearchState.query;
-
-      return Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    // Show query image thumbnail for image search
-                    if (_currentSearchState.isImageSearch &&
-                        _currentSearchState.queryImage != null) ...[
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          _currentSearchState.queryImage!,
-                          width: 48,
-                          height: 48,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
+            const SizedBox(height: 28),
+            Text('No results found',
+                style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.w600, letterSpacing: -0.2)),
+            const SizedBox(height: 6),
+            Text('Try one of these instead',
+                style: TextStyle(color: isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B), fontSize: 14)),
+            const SizedBox(height: 20),
+            // Suggestion chips
+            if (_currentSearchState.suggestions?.isNotEmpty == true)
+              Wrap(
+                spacing: 8, runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: _currentSearchState.suggestions!.map((s) => Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF161B22) : Colors.white,
+                    border: Border.all(color: isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0)),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.search, size: 13, color: isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB)),
+                      const SizedBox(width: 6),
+                      Text(s, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w500)),
                     ],
-                    Expanded(
-                      child: Text(
-                        _currentSearchState.isImageSearch
-                            ? 'Similar Images'
-                            : _currentSearchState.query,
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    if (_currentSearchState.isImageSearch)
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: () {
-                          widget.searchService.clearSearch();
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      )
-                    else
-                      Icon(
-                        Icons.tune,
-                        color: isDark
-                            ? const Color(0xFF666666)
-                            : const Color(0xFF999999),
-                        size: 24,
-                      ),
-                  ],
-                ),
-                // Show normalized query chip if different from original
-                if (hasNormalization)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
+                  ),
+                )).toList(),
+              )
+            else
+              Wrap(
+                spacing: 8, runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: ['red sunset', 'beach photos', 'kasama ang pamilya', 'pagkain'].map((s) =>
+                  GestureDetector(
+                    onTap: () {
+                      _searchController.text = s;
+                      _performSearch();
+                    },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF4A90E2).withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: const Color(0xFF4A90E2).withOpacity(0.3),
-                        ),
+                        color: isDark ? const Color(0xFF161B22) : Colors.white,
+                        border: Border.all(color: isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0)),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.translate,
-                            size: 14,
-                            color: const Color(0xFF4A90E2),
-                          ),
+                          Icon(Icons.search, size: 13, color: isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB)),
                           const SizedBox(width: 6),
-                          Text(
-                            'Normalized: "${_currentSearchState.normalizedQuery}"',
-                            style: TextStyle(
-                              color: const Color(0xFF4A90E2),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
+                          Text(s, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
                   ),
-              ],
-            ),
-          ),
-          // Weak-result suggestions (shown when results exist but confidence is low)
-          if (_currentSearchState.queryConfidence == QueryConfidence.weak &&
-              _currentSearchState.suggestions?.isNotEmpty == true)
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 4),
-              child: _buildSuggestionChips(
-                _currentSearchState.suggestions!,
-                'Try instead:',
+                ).toList(),
               ),
-            ),
-          // View All Results button
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${results.length} result${results.length == 1 ? '' : 's'}',
-                  style: TextStyle(
-                    color: textColor.withOpacity(0.6),
-                    fontSize: 13,
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: () => _navigateToResults(),
-                  icon: const Icon(Icons.grid_view, size: 18),
-                  label: const Text('View All'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF4A90E2),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                  childAspectRatio: 1,
-                ),
-                itemCount: results.length,
-                itemBuilder: (context, index) {
-                  final image = results[index];
-                  return GestureDetector(
-                    onTap: () => _navigateToDetails(image, results, index),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF2A2A2A)
-                            : const Color(0xFFE0E0E0),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            _buildImageThumbnail(image, isDark),
-                            // Rank badge
-                            Positioned(
-                              top: 4,
-                              left: 4,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF4A90E2),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  '#${index + 1}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            // Similarity score badge
-                            if (_currentSearchState.result?.scoreAt(index) != null)
-                              Positioned(
-                                bottom: 4,
-                                right: 4,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.7),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    '${(_currentSearchState.result!.scoreAt(index)! * 100).toStringAsFixed(1)}%',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       );
     }
 
@@ -639,139 +436,67 @@ class _SearchScreenState extends State<SearchScreen> {
       return _buildHistoryList(isDark, textColor, historyMatches, showClearAll: inputText.isEmpty);
     }
 
-    // Default state - show gallery of indexed images
-    if (_indexedImages.isEmpty) {
-      // No images indexed yet - show logo
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 150,
-              height: 150,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(30),
-                border: Border.all(color: const Color(0xFF1E3A5F), width: 3),
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Outer circles
-                  Positioned(
-                    top: 30,
-                    left: 30,
-                    child: _buildCircle(20, const Color(0xFF4A90E2)),
-                  ),
-                  Positioned(
-                    top: 30,
-                    right: 30,
-                    child: _buildCircle(20, const Color(0xFF5BA3F5)),
-                  ),
-                  Positioned(
-                    bottom: 30,
-                    left: 30,
-                    child: _buildCircle(20, const Color(0xFF5BA3F5)),
-                  ),
-                  Positioned(
-                    bottom: 30,
-                    right: 30,
-                    child: _buildCircle(20, const Color(0xFF4A90E2)),
-                  ),
-                  // Center circle
-                  _buildCircle(35, const Color(0xFF4A90E2)),
-                  // Inner design
-                  Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: const Color(0xFF5BA3F5), width: 2),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (_isLoadingGallery)
-              Column(
-                children: [
-                  const CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A90E2)),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Loading gallery...',
-                    style: TextStyle(
-                      color: textColor.withOpacity(0.6),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-          ],
-        ),
-      );
-    }
+    // Idle with no history — show suggested prompts
+    return _buildIdlePrompt(isDark, textColor);
+  }
 
-    // Show gallery of all indexed images
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Indexed Images',
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w500,
+  Widget _buildIdlePrompt(bool isDark, Color textColor) {
+    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
+    final surface = isDark ? const Color(0xFF161B22) : Colors.white;
+    final border = isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0);
+    final textMore = isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B);
+
+    const suggested = [
+      'sunset sa beach',
+      'kumakain sa mesa',
+      'pamilya sa bahay',
+      'tao sa parke',
+    ];
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionLabelRow('Suggested', isDark),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: suggested.map((s) => GestureDetector(
+              onTap: () => _runHistoryQuery(s),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: surface,
+                  border: Border.all(color: border),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome, size: 13, color: blue),
+                    const SizedBox(width: 6),
+                    Text(s,
+                        style: TextStyle(
+                            color: textColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500)),
+                  ],
                 ),
               ),
-              Text(
-                '${_indexedImages.length} images',
-                style: TextStyle(
-                  color: textColor.withOpacity(0.6),
-                  fontSize: 13,
-                ),
-              ),
-            ],
+            )).toList(),
           ),
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: GridView.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                childAspectRatio: 1,
-              ),
-              itemCount: _indexedImages.length,
-              itemBuilder: (context, index) {
-                final image = _indexedImages[index];
-                return GestureDetector(
-                  onTap: () => _navigateToDetails(image, _indexedImages, index),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? const Color(0xFF2A2A2A)
-                          : const Color(0xFFE0E0E0),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: _buildImageThumbnail(image, isDark),
-                    ),
-                  ),
-                );
-              },
+          const SizedBox(height: 32),
+          Center(
+            child: Text(
+              'Type a query or pick an image to search',
+              style: TextStyle(color: textMore, fontSize: 13),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -781,121 +506,139 @@ class _SearchScreenState extends State<SearchScreen> {
     List<String> queries, {
     required bool showClearAll,
   }) {
-    final hintColor = isDark ? Colors.white38 : Colors.black38;
+    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
+    final blueSoft = isDark ? const Color(0x2E3B82F6) : const Color(0xFFDBEAFE);
+    final surface = isDark ? const Color(0xFF161B22) : Colors.white;
+    final border = isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0);
+    final hairline = isDark ? const Color(0x1F60A5FA) : const Color(0x192563EB);
+    final textFaint = isDark ? const Color(0x61FFFFFF) : const Color(0xFF94A3B8);
+    final chipBg = isDark ? const Color(0x243B82F6) : const Color(0xFFDBEAFE);
+    final chipText = isDark ? const Color(0xFF93C5FD) : const Color(0xFF1D4ED8);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header row
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 8, 4),
-          child: Row(
-            children: [
-              Text(
-                'Recent Searches',
-                style: TextStyle(
-                  color: textColor.withValues(alpha: 0.5),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.6,
+    // Suggested queries (preset examples shown above history)
+    const suggested = ['sunset sa beach', 'kumakain sa mesa', 'pamilya sa bahay'];
+
+    return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Suggested chips
+          _buildSectionLabel('Suggested', isDark),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: suggested.map((s) => GestureDetector(
+              onTap: () => _runHistoryQuery(s),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: surface,
+                  border: Border.all(color: border),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome, size: 13, color: blue),
+                    const SizedBox(width: 6),
+                    Text(s, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w500)),
+                  ],
                 ),
               ),
-              const Spacer(),
-              if (showClearAll)
-                TextButton(
-                  onPressed: () async {
-                    await _historyService.clearAll();
-                    setState(() {});
-                  },
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF4A90E2),
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            )).toList(),
+          ),
+
+          // Recent section header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(0, 14, 0, 8),
+            child: Row(
+              children: [
+                _sectionLabelRow('Recent', isDark),
+                const Spacer(),
+                if (showClearAll)
+                  GestureDetector(
+                    onTap: () async {
+                      await _historyService.clearAll();
+                      setState(() {});
+                    },
+                    child: Text('Clear all',
+                        style: TextStyle(fontSize: 13, color: blue, fontWeight: FontWeight.w500)),
                   ),
-                  child: const Text('Clear all', style: TextStyle(fontSize: 13)),
-                ),
-            ],
-          ),
-        ),
-        // History items
-        Expanded(
-          child: ListView.builder(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            itemCount: queries.length,
-            itemBuilder: (context, index) {
-              final query = queries[index];
-              return ListTile(
-                dense: true,
-                leading: Icon(Icons.history, color: hintColor, size: 20),
-                title: Text(
-                  query,
-                  style: TextStyle(color: textColor, fontSize: 15),
-                ),
-                trailing: IconButton(
-                  icon: Icon(Icons.close, color: hintColor, size: 18),
-                  splashRadius: 18,
-                  onPressed: () async {
-                    await _historyService.removeQuery(query);
-                    setState(() {});
-                  },
-                ),
-                onTap: () => _runHistoryQuery(query),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCircle(double size, Color color) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-    );
-  }
-
-  /// Build an image thumbnail widget
-  Widget _buildImageThumbnail(ImageItem image, bool isDark) {
-    return Image.file(
-      File(image.path),
-      fit: BoxFit.cover,
-      cacheWidth: 256,
-      errorBuilder: (_, _, _) => _buildPlaceholder(image, isDark),
-    );
-  }
-
-  /// Build placeholder for images that can't be loaded
-  Widget _buildPlaceholder(ImageItem image, bool isDark) {
-    return Container(
-      color: isDark ? const Color(0xFF3A3A3A) : const Color(0xFFD0D0D0),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.image_outlined,
-              color: isDark
-                  ? Colors.white.withOpacity(0.3)
-                  : Colors.black.withOpacity(0.3),
-              size: 32,
+              ],
             ),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Text(
-                image.name,
-                style: TextStyle(
-                  color: isDark
-                      ? Colors.white.withOpacity(0.5)
-                      : Colors.black.withOpacity(0.5),
-                  fontSize: 9,
+          ),
+
+          // History card
+          Container(
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: border),
+            ),
+            child: Column(
+              children: [
+                for (int i = 0; i < queries.length; i++) ...[
+                  if (i > 0)
+                    Container(height: 1, color: hairline, margin: const EdgeInsets.symmetric(horizontal: 14)),
+                  _buildHistoryItem(queries[i], i, blue, blueSoft, chipBg, chipText, textColor, textFaint, isDark),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryItem(
+    String query,
+    int index,
+    Color blue,
+    Color blueSoft,
+    Color chipBg,
+    Color chipText,
+    Color textColor,
+    Color textFaint,
+    bool isDark,
+  ) {
+    return InkWell(
+      onTap: () => _runHistoryQuery(query),
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            // Blue circle with history icon
+            Container(
+              width: 28, height: 28,
+              decoration: BoxDecoration(color: blueSoft, shape: BoxShape.circle),
+              child: Icon(Icons.history, size: 14, color: blue),
+            ),
+            const SizedBox(width: 12),
+            // Query text
+            Expanded(
+              child: Text(query,
+                  style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.w500),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            // Arrow icon
+            Icon(Icons.north_east, size: 16, color: textFaint),
+            // Delete button
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () async {
+                await _historyService.removeQuery(query);
+                setState(() {});
+              },
+              child: Container(
+                width: 24, height: 24,
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF222A36) : const Color(0xFFE2EAF4),
+                  shape: BoxShape.circle,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
+                child: Icon(Icons.close, size: 14, color: textFaint),
               ),
             ),
           ],
@@ -904,30 +647,37 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  Widget _buildSectionLabel(String label, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 14, 0, 8),
+      child: _sectionLabelRow(label, isDark),
+    );
+  }
+
+  Widget _sectionLabelRow(String label, bool isDark) {
+    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
+    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: 3, height: 14,
+            decoration: BoxDecoration(color: blue, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 8),
+        Text(label.toUpperCase(),
+            style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
+      ],
+    );
+  }
+
   /// Navigate to the full results screen
-  void _navigateToResults() {
+  Future<void> _navigateToResults() async {
     final result = _currentSearchState.result;
     if (result == null) return;
-
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => ResultsScreen(
           searchResult: result,
           searchService: widget.searchService,
-        ),
-      ),
-    );
-  }
-
-  /// Navigate to image details screen
-  void _navigateToDetails(ImageItem image, List<ImageItem> allResults, int index) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => DetailsScreen(
-          image: image,
-          searchService: widget.searchService,
-          imageList: allResults,
-          currentIndex: index,
         ),
       ),
     );
@@ -1094,7 +844,7 @@ class _TestImagePickerScreen extends StatelessWidget {
       fit: BoxFit.cover,
       cacheWidth: 256,
       errorBuilder: (_, _, _) => Container(
-        color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0),
+        color: isDark ? const Color(0xFF1A2030) : const Color(0xFFE2EAF4),
         child: Icon(
           Icons.image_outlined,
           color: isDark ? Colors.white30 : Colors.black26,

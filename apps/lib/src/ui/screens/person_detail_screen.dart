@@ -201,8 +201,8 @@ class _PersonDetailScreenState extends State<PersonDetailScreen> {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: isDark
-                  ? const Color(0xFF2A2A2A)
-                  : const Color(0xFFE8E8E8),
+                  ? const Color(0xFF1A2030)
+                  : const Color(0xFFE8EEF6),
               border: Border.all(
                 color: _person.isLabeled
                     ? Theme.of(context).colorScheme.primary
@@ -261,7 +261,7 @@ class _PersonDetailScreenState extends State<PersonDetailScreen> {
   Widget _buildImageTile(ImageItem image, bool isDark) {
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0),
+        color: isDark ? const Color(0xFF1A2030) : const Color(0xFFE2EAF4),
         borderRadius: BorderRadius.circular(8),
       ),
       child: ClipRRect(

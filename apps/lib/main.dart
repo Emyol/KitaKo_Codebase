@@ -4,8 +4,11 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'src/services/crash_logger.dart';
 import 'src/ui/screens/startup_screen.dart';
+import 'src/ui/screens/eula_screen.dart';
+import 'src/ui/screens/permission_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/services/face_service.dart';
 import 'src/services/image_search_service.dart';
@@ -176,33 +179,33 @@ class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
           darkTheme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: const Color(0xFF1A1A1A),
+            scaffoldBackgroundColor: const Color(0xFF0E1116),
             colorScheme: const ColorScheme.dark(
-              primary: Color(0xFFFFD54F),
-              secondary: Color(0xFFFFE082),
-              surface: Color(0xFF2A2A2A),
-              background: Color(0xFF1A1A1A),
+              primary: Color(0xFF3B82F6),
+              secondary: Color(0xFF60A5FA),
+              surface: Color(0xFF161B22),
             ),
             appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFF1A1A1A),
+              backgroundColor: Color(0xFF0E1116),
               elevation: 0,
               centerTitle: false,
-              iconTheme: IconThemeData(color: Color(0xFFFFD54F)),
+              iconTheme: IconThemeData(color: Color(0xFF60A5FA)),
               titleTextStyle: TextStyle(
-                color: Color(0xFFFFD54F),
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
+                color: Color(0xFF60A5FA),
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
               ),
             ),
+            dividerColor: const Color(0x1F60A5FA),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
-              fillColor: const Color(0xFF2A2A2A),
+              fillColor: const Color(0xFF161B22),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
               ),
               hintStyle: const TextStyle(
-                color: Color(0xFF666666),
+                color: Color(0x8CFFFFFF),
                 fontSize: 16,
               ),
             ),
@@ -211,47 +214,115 @@ class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
           theme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.light,
-            scaffoldBackgroundColor: const Color(0xFFF5F5F5),
+            scaffoldBackgroundColor: const Color(0xFFF4F7FB),
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF4A90E2),
-              secondary: Color(0xFF5BA3F5),
-              surface: Colors.white,
-              background: Color(0xFFF5F5F5),
+              primary: Color(0xFF2563EB),
+              secondary: Color(0xFF3B82F6),
+              surface: Color(0xFFFFFFFF),
             ),
             appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFFF5F5F5),
+              backgroundColor: Color(0xFFF4F7FB),
               elevation: 0,
               centerTitle: false,
-              iconTheme: IconThemeData(color: Color(0xFF1E3A5F)),
+              iconTheme: IconThemeData(color: Color(0xFF0B2545)),
               titleTextStyle: TextStyle(
-                color: Color(0xFF1E3A5F),
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
+                color: Color(0xFF0B2545),
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
               ),
             ),
+            dividerColor: const Color(0x192563EB),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
               fillColor: Colors.white,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
               ),
               hintStyle: const TextStyle(
-                color: Color(0xFF999999),
+                color: Color(0xFF64748B),
                 fontSize: 16,
               ),
             ),
           ),
-          home: ModelDownloadGate(
-            autoDownload: true, // Auto-download on first launch
-            child: StartupScreen(
-              themeNotifier: _themeNotifier,
-              searchService: _searchService,
-              settingsController: _settingsController,
-            ),
+          home: _AppGate(
+            themeNotifier: _themeNotifier,
+            searchService: _searchService,
+            settingsController: _settingsController,
           ),
         );
       },
+    );
+  }
+}
+
+/// Gates the app through EULA acceptance before showing the startup/home flow.
+class _AppGate extends StatefulWidget {
+  final ThemeNotifier themeNotifier;
+  final ImageSearchService searchService;
+  final SettingsController settingsController;
+
+  const _AppGate({
+    required this.themeNotifier,
+    required this.searchService,
+    required this.settingsController,
+  });
+
+  @override
+  State<_AppGate> createState() => _AppGateState();
+}
+
+class _AppGateState extends State<_AppGate> {
+  // null = still loading from SharedPreferences
+  bool? _permissionsRequested;
+  bool? _eulaAccepted;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFlags();
+  }
+
+  Future<void> _loadFlags() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _permissionsRequested =
+            prefs.getBool('permissions_requested') ?? false;
+        _eulaAccepted = prefs.getBool('eula_accepted') ?? false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Still loading prefs — show blank
+    if (_permissionsRequested == null || _eulaAccepted == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
+
+    // Step 1: permissions (shown once before anything else)
+    if (!_permissionsRequested!) {
+      return PermissionScreen(
+        onComplete: () => setState(() => _permissionsRequested = true),
+      );
+    }
+
+    // Step 2: EULA
+    if (!_eulaAccepted!) {
+      return EulaScreen(
+        onAccepted: () => setState(() => _eulaAccepted = true),
+      );
+    }
+
+    // Step 3: app
+    return ModelDownloadGate(
+      autoDownload: true,
+      child: StartupScreen(
+        themeNotifier: widget.themeNotifier,
+        searchService: widget.searchService,
+        settingsController: widget.settingsController,
+      ),
     );
   }
 }
