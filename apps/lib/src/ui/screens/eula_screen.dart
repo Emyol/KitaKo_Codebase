@@ -241,8 +241,13 @@ class _EulaScreenState extends State<EulaScreen> {
                       _bulletWithTerm('Storage Access:', textColor, textDim,
                           'Required for maintaining the local index, embeddings, metadata, and configuration files '
                           'within the Application\'s sandbox.'),
+                      _bulletWithTerm('Camera Access (Optional):', textColor, textDim,
+                          'Requested to enable image-to-image search by capturing a photo directly within the Application. '
+                          'This permission is entirely optional — the Application functions fully without it. '
+                          'You may deny or revoke camera access at any time through your device\'s settings without affecting '
+                          'the core photo library search functionality.'),
                       _para(
-                          'The Application does not request permissions for camera access, microphone access, location '
+                          'The Application does not request permissions for microphone access, location '
                           'services, contacts, network access, or any other permissions unrelated to its core photo '
                           'retrieval functionality. You may revoke permissions at any time through your device\'s settings, '
                           'though doing so may limit the Application\'s functionality.',

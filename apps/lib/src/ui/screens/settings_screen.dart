@@ -434,7 +434,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
 
-          // ── MODELS ──────────────────────────────────────────────────────────
+          // ── MODELS (developer only) ─────────────────────────────────────────
+          if (kDebugMode) ...[
           _SectionLabel(label: 'Models', blue: blue, textDim: textDim),
           _KKCard(
             surface: surface,
@@ -534,6 +535,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
+          ], // kDebugMode Models
 
           // ── INDEXING & STORAGE ───────────────────────────────────────────────
           _SectionLabel(

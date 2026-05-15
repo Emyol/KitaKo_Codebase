@@ -38,7 +38,7 @@ class _StartupScreenState extends State<StartupScreen>
 
   StreamSubscription<IndexingProgress>? _progressSub;
   IndexingProgress _progress =
-      const IndexingProgress(phase: IndexingPhase.idle, message: 'Startingâ€¦');
+      const IndexingProgress(phase: IndexingPhase.idle, message: 'Starting…');
 
   bool _navigated = false;
   bool _startTriggered = false;
@@ -138,7 +138,7 @@ class _StartupScreenState extends State<StartupScreen>
     setState(() {
       _startTriggered = false;
       _progress = const IndexingProgress(
-          phase: IndexingPhase.idle, message: 'Retryingâ€¦');
+          phase: IndexingPhase.idle, message: 'Retrying…');
     });
     _startInit();
   }
@@ -301,7 +301,7 @@ class _StartupScreenState extends State<StartupScreen>
         ),
         const SizedBox(height: 16),
         Text(
-          _progress.message.isEmpty ? 'Startingâ€¦' : _progress.message,
+          _progress.message.isEmpty ? 'Starting…' : _progress.message,
           textAlign: TextAlign.center,
           style: const TextStyle(color: Color(0xFF888888), fontSize: 13),
         ),
