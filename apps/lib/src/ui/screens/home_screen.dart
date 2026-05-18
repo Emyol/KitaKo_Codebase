@@ -759,28 +759,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Container(
       color: bannerColor,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  value: fraction,
-                  valueColor: AlwaysStoppedAnimation<Color>(barColor),
-                  backgroundColor: barColor.withValues(alpha: 0.2),
-                ),
-              ),
-              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   _indexingProgress.message.isEmpty
-                      ? 'Indexing photosâ€¦'
+                      ? 'Indexing photos…'
                       : _indexingProgress.message,
                   style: TextStyle(
                       fontSize: 12,
