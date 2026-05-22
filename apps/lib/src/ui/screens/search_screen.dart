@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
+import '../../services/camera_capture_service.dart';
 import '../../services/image_search_service.dart';
 import '../../services/search_history_service.dart';
 import '../../models/search_models.dart';
@@ -712,9 +713,10 @@ class _SearchScreenState extends State<SearchScreen> {
             ListTile(
               leading: const Icon(Icons.camera_alt),
               title: const Text('Take a Photo'),
+              subtitle: const Text('Saves to gallery and indexes for search'),
               onTap: () {
                 Navigator.pop(context);
-                _performImageSearch(ImageSource.camera);
+                _captureAndSearch();
               },
             ),
             const SizedBox(height: 8),
@@ -765,7 +767,79 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
-  /// Pick image from the given source and perform image-to-image search
+  /// Open the in-app camera, save the capture to the gallery, embed and
+  /// index it so it becomes searchable, then run an image-to-image search
+  /// using the same photo.
+  ///
+  /// Pipeline mirrors a real camera app: capture → gallery → embed → index
+  /// → search. The save and the search both consume the captured bytes
+  /// in-memory so there is no redundant disk I/O.
+  Future<void> _captureAndSearch() async {
+    final messenger = mounted ? ScaffoldMessenger.of(context) : null;
+
+    try {
+      final captureService = CameraCaptureService();
+      final result = await captureService.captureAndSave(
+        maxWidth: 1024,
+        maxHeight: 1024,
+      );
+      if (result == null) return; // user cancelled
+
+      // Surface gallery-save outcome so the user knows the photo persisted.
+      if (mounted && messenger != null) {
+        final String text;
+        if (result.savedToGallery) {
+          text = 'Photo saved to gallery — indexing…';
+        } else if (result.saveError != null) {
+          // Truncate so a long Kotlin stack trace doesn't blow up the bar.
+          final err = result.saveError!;
+          final short = err.length > 120 ? '${err.substring(0, 120)}…' : err;
+          text = 'Capture OK, gallery save failed: $short';
+        } else {
+          text = 'Photo captured (gallery save skipped)';
+        }
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(text),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: result.savedToGallery ? 2 : 5),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+
+      // Embed + register in the ANN index in-place so the new photo is
+      // immediately a search candidate. Skipped silently if save failed.
+      if (result.savedAsset != null) {
+        await widget.searchService
+            .indexCapturedPhoto(result.savedAsset!, result.bytes);
+      }
+
+      // Run the image-to-image search against the just-captured bytes —
+      // works regardless of whether indexing succeeded.
+      await widget.searchService.searchByImage(result.bytes);
+    } catch (e) {
+      if (mounted && messenger != null) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Camera capture failed: $e'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Pick an image from the gallery and perform image-to-image search.
+  ///
+  /// Kept as a separate path from [_captureAndSearch]: gallery picks reuse
+  /// existing assets so they don't need to be saved or re-indexed.
+  // ignore: unused_element
   Future<void> _performImageSearch(ImageSource source) async {
     try {
       final ImagePicker picker = ImagePicker();
@@ -777,7 +851,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
       if (image == null) return;
 
-      // Read image bytes and perform image-to-image search
       final bytes = await image.readAsBytes();
       await widget.searchService.searchByImage(bytes);
     } catch (e) {

@@ -45,6 +45,7 @@ flutter {
     source = "../.."
 }
 
+
 // ---------------------------------------------------------------------------
 // Auto-push ONNX models to connected Android device during development.
 //
@@ -101,5 +102,98 @@ tasks.register("pushOnnxModels") {
 tasks.configureEach {
     if (name.startsWith("install")) {
         finalizedBy("pushOnnxModels")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test dataset helpers — push/clear personal_1k images on the device.
+//
+// Target path: internal storage → DCIM → personal_1k
+//   /sdcard/DCIM/personal_1k/
+//
+// The folder is visible in the Android Files app and Gallery and can be
+// deleted there at any time. MediaStore is rescanned after each operation
+// so changes appear in the gallery immediately without a reboot.
+//
+// Usage:
+//   ./gradlew pushTestImages   — push missing images (skips existing)
+//   ./gradlew clearTestImages  — delete the folder and rescan gallery
+// ---------------------------------------------------------------------------
+tasks.register("pushTestImages") {
+    description = "Push personal_1k test images to /sdcard/DCIM/personal_1k/ on connected device"
+    group = "kitako"
+
+    doLast {
+        val imagesDir = file("../../../test_datasets/personal_1k")
+        if (!imagesDir.exists()) {
+            logger.warn("pushTestImages: test_datasets/personal_1k not found at ${imagesDir.absolutePath}")
+            return@doLast
+        }
+
+        val supportedExts = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
+        val imageFiles = imagesDir.listFiles()
+            ?.filter { it.isFile && it.extension.lowercase() in supportedExts }
+            ?: emptyList()
+
+        if (imageFiles.isEmpty()) {
+            logger.warn("pushTestImages: No image files found in ${imagesDir.absolutePath}")
+            return@doLast
+        }
+
+        val adb = android.adbExecutable.absolutePath
+        val remoteDir = "/sdcard/DCIM/personal_1k"
+
+        // Ensure the target directory exists on the device
+        ProcessBuilder(adb, "shell", "mkdir", "-p", remoteDir)
+            .inheritIO().start().waitFor()
+
+        var pushed = 0
+        var skipped = 0
+        for (imgFile in imageFiles) {
+            val remotePath = "$remoteDir/${imgFile.name}"
+            val check = ProcessBuilder(adb, "shell", "ls", remotePath)
+                .redirectErrorStream(true).start()
+            check.inputStream.readBytes()
+            if (check.waitFor() == 0) {
+                skipped++
+                continue
+            }
+            logger.lifecycle("pushTestImages: Pushing ${imgFile.name}...")
+            ProcessBuilder(adb, "push", imgFile.absolutePath, remotePath)
+                .inheritIO().start().waitFor()
+            pushed++
+        }
+
+        logger.lifecycle("pushTestImages: Pushed $pushed image(s), skipped $skipped (already present)")
+
+        // Rescan so the folder appears as an album in the gallery right away
+        if (pushed > 0) {
+            logger.lifecycle("pushTestImages: Triggering MediaStore scan...")
+            ProcessBuilder(adb, "shell", "cmd", "media", "scan", remoteDir)
+                .inheritIO().start().waitFor()
+        }
+
+        logger.lifecycle("pushTestImages: Done — images at $remoteDir")
+    }
+}
+
+tasks.register("clearTestImages") {
+    description = "Remove /sdcard/DCIM/personal_1k/ from the connected device and rescan gallery"
+    group = "kitako"
+
+    doLast {
+        val adb = android.adbExecutable.absolutePath
+        val remoteDir = "/sdcard/DCIM/personal_1k"
+
+        logger.lifecycle("clearTestImages: Removing $remoteDir...")
+        ProcessBuilder(adb, "shell", "rm", "-rf", remoteDir)
+            .inheritIO().start().waitFor()
+
+        // Rescan the parent so MediaStore removes the stale album entries
+        logger.lifecycle("clearTestImages: Triggering MediaStore rescan...")
+        ProcessBuilder(adb, "shell", "cmd", "media", "scan", "/sdcard/DCIM")
+            .inheritIO().start().waitFor()
+
+        logger.lifecycle("clearTestImages: Done")
     }
 }

@@ -18,13 +18,30 @@ class ResultsScreen extends StatefulWidget {
   State<ResultsScreen> createState() => _ResultsScreenState();
 }
 
+/// Coarse relevance buckets shown to the user instead of a continuous slider.
+///
+/// Each bucket maps to a minimum score as a fraction of the top result's
+/// score. `off` means no relevance filtering at all.
+enum _RelevanceBucket {
+  off(0.0, 'Off'),
+  veryLow(0.20, 'Very Low'),
+  low(0.40, 'Low'),
+  average(0.60, 'Average'),
+  high(0.80, 'High'),
+  veryHigh(0.95, 'Very High');
+
+  final double threshold;
+  final String label;
+  const _RelevanceBucket(this.threshold, this.label);
+}
+
 class _ResultsScreenState extends State<ResultsScreen> {
   // â”€â”€ Filter state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   DateTime? _startDate;
   DateTime? _endDate;
 
-  /// Minimum score as a fraction of the top result's score (0.0 = off, 0.8 = 80%).
-  double _relevancePct = 0.0;
+  /// Selected relevance bucket. `off` means no filtering.
+  _RelevanceBucket _relevance = _RelevanceBucket.off;
 
   /// null = show all.
   int? _maxResults;
@@ -36,7 +53,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   bool get _hasActiveFilters =>
       _startDate != null ||
       _endDate != null ||
-      _relevancePct > 0.0 ||
+      _relevance != _RelevanceBucket.off ||
       _maxResults != null;
 
   /// Returns indices into `widget.searchResult.images` that pass all filters.
@@ -44,7 +61,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
     final scores = widget.searchResult.scores;
     final topScore =
         (scores != null && scores.isNotEmpty) ? scores.first : 1.0;
-    final minScore = _relevancePct > 0.0 ? topScore * _relevancePct : null;
+    final minScore = _relevance != _RelevanceBucket.off
+        ? topScore * _relevance.threshold
+        : null;
 
     final end = _endDate != null
         ? DateTime(_endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59)
@@ -89,7 +108,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
     // the user taps Apply.
     var start = _startDate;
     var end = _endDate;
-    var relPct = _relevancePct;
+    var relevance = _relevance;
     int? maxRes = _maxResults;
 
     final scores = widget.searchResult.scores;
@@ -163,7 +182,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           setSheet(() {
                             start = null;
                             end = null;
-                            relPct = 0.0;
+                            relevance = _RelevanceBucket.off;
                             maxRes = null;
                           });
                         },
@@ -225,55 +244,54 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   // â”€â”€ Relevance Threshold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                   Row(
                     children: [
-                      Text('Relevance Threshold', style: labelStyle),
+                      Text('Relevance', style: labelStyle),
                       const Spacer(),
+                      // Tiny score indicator: still surfaces the underlying %
+                      // so users who care can verify what the bucket means.
                       Text(
-                        relPct > 0
-                            ? 'â‰¥ ${(relPct * 100).round()}% of top'
-                            : 'Off',
+                        relevance == _RelevanceBucket.off
+                            ? 'Off'
+                            : 'â‰¥ ${(relevance.threshold * 100).round()}% of top',
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: relPct > 0
-                              ? const Color(0xFF3B82F6)
-                              : (isDark ? Colors.white38 : Colors.black38),
+                          color: relevance == _RelevanceBucket.off
+                              ? (isDark ? Colors.white38 : Colors.black38)
+                              : const Color(0xFF3B82F6),
                         ),
                       ),
                     ],
                   ),
-                  if (relPct > 0) ...[
+                  if (relevance != _RelevanceBucket.off) ...[
                     const SizedBox(height: 2),
                     Text(
                       'Top score: ${_formatScore(topScore)}  â†’  '
-                      'Min shown: ${_formatScore(topScore * relPct)}',
+                      'Min shown: ${_formatScore(topScore * relevance.threshold)}',
                       style: subStyle,
                     ),
                   ],
-                  SliderTheme(
-                    data: SliderTheme.of(ctx).copyWith(
-                      activeTrackColor: const Color(0xFF3B82F6),
-                      thumbColor: const Color(0xFF3B82F6),
-                      overlayColor:
-                          const Color(0xFF3B82F6).withValues(alpha: 0.15),
-                      inactiveTrackColor: isDark
-                          ? Colors.white24
-                          : Colors.black12,
-                    ),
-                    child: Slider(
-                      value: relPct,
-                      min: 0.0,
-                      max: 1.0,
-                      divisions: 20,
-                      onChanged: (v) => setSheet(() => relPct = v),
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Off', style: subStyle),
-                      Text('50%', style: subStyle),
-                      Text('100%', style: subStyle),
-                    ],
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _RelevanceBucket.values.map((b) {
+                      final selected = relevance == b;
+                      return ChoiceChip(
+                        label: Text(b.label),
+                        selected: selected,
+                        onSelected: (_) => setSheet(() => relevance = b),
+                        selectedColor: const Color(0xFF3B82F6),
+                        labelStyle: TextStyle(
+                          color: selected
+                              ? Colors.white
+                              : (isDark ? Colors.white70 : Colors.black87),
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                          fontSize: 12,
+                        ),
+                      );
+                    }).toList(),
                   ),
                   const SizedBox(height: 16),
                   Divider(color: divColor),
@@ -367,7 +385,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                         setState(() {
                           _startDate = start;
                           _endDate = end;
-                          _relevancePct = relPct;
+                          _relevance = relevance;
                           _maxResults = maxRes;
                         });
                         Navigator.of(ctx).pop();
@@ -533,7 +551,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           onTap: () => setState(() {
                             _startDate = null;
                             _endDate = null;
-                            _relevancePct = 0.0;
+                            _relevance = _RelevanceBucket.off;
                             _maxResults = null;
                           }),
                           child: Container(
@@ -731,7 +749,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
               onPressed: () => setState(() {
                 _startDate = null;
                 _endDate = null;
-                _relevancePct = 0.0;
+                _relevance = _RelevanceBucket.off;
                 _maxResults = null;
               }),
               icon: const Icon(Icons.filter_alt_off),

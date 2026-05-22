@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:kitako_normalizer/kitako_normalizer.dart';
+import 'package:photo_manager/photo_manager.dart';
 import '../models/search_models.dart';
 import 'image_loader_service.dart';
 import 'embedding_service.dart';
@@ -309,8 +310,14 @@ class ImageSearchService {
 
   // ========== Configuration ==========
 
-  /// Number of top results to return
-  int topK = 20;
+  /// Number of top results to return.
+  ///
+  /// This is the upper bound returned from the ANN index before UI-level
+  /// filtering (relevance threshold, display count) trims further. The
+  /// Results screen offers chips up to 100 + an "All" option, so this must
+  /// be at least as large as the largest discrete chip — otherwise picking
+  /// "100" or "All" still only ever surfaces this many results.
+  int topK = 100;
 
   /// Absolute floor: any result below this cosine similarity is discarded.
   ///
@@ -741,6 +748,83 @@ class ImageSearchService {
       throw StateError('Could not load image for ID: $imageId');
     }
     await searchByImage(bytes);
+  }
+
+  /// Embed and index a freshly-captured photo in one shot.
+  ///
+  /// Designed for the in-app camera flow:
+  ///   1. `CameraCaptureService.captureAndSave()` shoots the photo and
+  ///      persists it to the gallery, returning an [AssetEntity] + bytes.
+  ///   2. This method injects the asset into the loader cache, embeds the
+  ///      bytes via the active vision encoder, and registers the result in
+  ///      the ANN index so the photo is searchable immediately — no full
+  ///      gallery re-scan required.
+  ///   3. The persistent embedding cache is updated in the background so the
+  ///      embedding survives an app restart.
+  ///
+  /// No-ops cleanly when:
+  ///   • the service hasn't initialised
+  ///   • the embedding backend isn't ready (e.g. mock or model not loaded)
+  ///   • the asset couldn't be resolved (file gone)
+  ///
+  /// Throws only for truly unexpected failures (the camera caller should
+  /// still surface its own snackbar on `searchByImage` failures elsewhere).
+  Future<ImageItem?> indexCapturedPhoto(
+    AssetEntity asset,
+    Uint8List bytes,
+  ) async {
+    if (!_isInitialized) {
+      debugPrint('ImageSearchService: indexCapturedPhoto called before init');
+      return null;
+    }
+    if (_embeddingService.activeBackend == EmbeddingBackend.mock ||
+        !_embeddingService.isImageReady) {
+      debugPrint('ImageSearchService: encoder not ready, '
+          'skipping incremental index for ${asset.id}');
+      // Still inject into the loader cache so the user sees the new photo
+      // in the gallery view even if it won't be searchable until next launch.
+      return _imageLoader.addAsset(asset);
+    }
+
+    // 1) Inject into the loader cache so the gallery view picks it up.
+    final item = await _imageLoader.addAsset(asset);
+    if (item == null) {
+      debugPrint('ImageSearchService: indexCapturedPhoto: asset resolve failed');
+      return null;
+    }
+
+    // 2) Embed via the active vision encoder using the bytes we already have.
+    final sw = Stopwatch()..start();
+    final List<double> embedding;
+    try {
+      embedding = await _embeddingService.generateImageEmbedding(bytes);
+    } catch (e) {
+      debugPrint('ImageSearchService: indexCapturedPhoto: embed failed: $e');
+      return item; // photo is in loader cache; just won't be searchable
+    }
+    sw.stop();
+
+    // 3) Register in the ANN index. restoreFromCache is the documented
+    //    single-entry insertion path and handles both brute-force and HNSW.
+    _annSearch.restoreFromCache(
+      {item.id: Float32List.fromList(embedding)},
+      {item.id: item},
+    );
+
+    // 4) Update loaded-images stream so any listening UI refreshes.
+    _loadedImages = [item, ..._loadedImages.where((i) => i.id != item.id)];
+    _indexedCount = _annSearch.indexSize;
+    _imagesLoadedController.add(_loadedImages);
+
+    debugPrint('ImageSearchService: indexed captured photo ${item.id} '
+        'in ${sw.elapsedMilliseconds}ms (index size now $_indexedCount)');
+
+    // 5) Persist updated embedding cache in the background so the embedding
+    //    survives a restart. Fire-and-forget — the cache write is robust to
+    //    failure (next launch just re-embeds this one photo).
+    unawaited(_saveEmbeddingCache());
+
+    return item;
   }
 
   // ========== Image Management ==========

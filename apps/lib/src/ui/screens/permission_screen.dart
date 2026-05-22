@@ -153,6 +153,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
                     textMore: textMore,
                   ),
 
+
                   const SizedBox(height: 32),
 
                   // Note
