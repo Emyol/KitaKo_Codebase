@@ -18,6 +18,25 @@ class ImageLoaderService {
 
   bool _isInitialized = false;
 
+  // ── Image source toggle ────────────────────────────────────────────────────
+  // Full device gallery  →  static const String? _kTestAlbum = null;
+  // personal_1k dataset  →  static const String? _kTestAlbum = 'personal_1k';
+  // ──────────────────────────────────────────────────────────────────────────
+  static const String? _kTestAlbum = 'personal_1k';
+
+  /// Album the in-app camera writes new captures into.
+  ///
+  /// Mirrors [_kTestAlbum] so test-build captures land in the same folder the
+  /// loader is reading from (otherwise the photo would save successfully but
+  /// never appear in Kitako's index). In production builds where the loader
+  /// reads the full gallery, this defaults to a Kitako-branded album so the
+  /// user can find their Kitako-captured photos as a distinct group.
+  static const String kCaptureAlbumName = _kTestAlbum ?? 'Kitako';
+
+  /// Relative path passed to `PhotoManager.editor.saveImageWithPath` —
+  /// translates to `/sdcard/DCIM/<album>/` on Android.
+  static const String kCaptureRelativePath = 'DCIM/$kCaptureAlbumName';
+
   static const List<String> _supportedExtensions = [
     '.jpg',
     '.jpeg',
@@ -41,21 +60,16 @@ class ImageLoaderService {
         return false;
       }
 
-      // Get the "all images" album sorted newest-first at the platform level.
-      // OrderOption on createDate (asc: false) means page 0 contains the most
-      // recently created images — so the first 200 assets loaded are today's
-      // photos, and the gallery renders the correct date sections immediately
-      // without any secondary sort in the UI layer.
+      // Load the full "All Photos" album sorted newest-first.
+      // If _kTestAlbum is set we post-filter by relativePath after loading,
+      // which is more reliable than matching album names in MediaStore.
       final albums = await PhotoManager.getAssetPathList(
         type: RequestType.image,
         hasAll: true,
         onlyAll: true,
         filterOption: FilterOptionGroup(
           orders: [
-            const OrderOption(
-              type: OrderOptionType.createDate,
-              asc: false,
-            ),
+            const OrderOption(type: OrderOptionType.createDate, asc: false),
           ],
         ),
       );
@@ -66,24 +80,84 @@ class ImageLoaderService {
         return true;
       }
 
-      final allAlbum = albums.first;
-      final count = await allAlbum.assetCountAsync;
-      debugPrint('ImageLoaderService: Device gallery has $count images');
+      // ── Pick source album ────────────────────────────────────────────────
+      // Prefer matching by album name (works on all Android versions); fall
+      // back to the full "All Photos" album if the test album isn't found.
+      AssetPathEntity? sourceAlbum;
+
+      if (_kTestAlbum != null) {
+        final specific = await PhotoManager.getAssetPathList(
+          type: RequestType.image,
+          hasAll: false,
+          onlyAll: false,
+          filterOption: FilterOptionGroup(
+            orders: [
+              const OrderOption(type: OrderOptionType.createDate, asc: false),
+            ],
+          ),
+        );
+
+        // Log every album name so we can see exactly what MediaStore reports.
+        debugPrint('ImageLoaderService: ${specific.length} album(s) on device:');
+        for (final a in specific) {
+          final n = await a.assetCountAsync;
+          debugPrint('  • "${a.name}" ($n images)');
+        }
+
+        final target = _kTestAlbum!.toLowerCase();
+        sourceAlbum = specific
+            .where((a) => a.name.toLowerCase() == target)
+            .firstOrNull;
+        sourceAlbum ??= specific
+            .where((a) => a.name.toLowerCase().contains(target))
+            .firstOrNull;
+
+        if (sourceAlbum != null) {
+          debugPrint(
+              'ImageLoaderService: Using test album "${sourceAlbum.name}"');
+        } else {
+          debugPrint(
+              'ImageLoaderService: Test album "$_kTestAlbum" not found by name '
+              '— will load full gallery and filter by relativePath');
+        }
+      }
+
+      sourceAlbum ??= albums.first;
+      final count = await sourceAlbum.assetCountAsync;
+      debugPrint('ImageLoaderService: Source "${sourceAlbum.name}" has $count images');
 
       // Load assets in pages to avoid OOM on large galleries.
       const pageSize = 200;
-      int loaded = 0;
       for (int start = 0; start < count; start += pageSize) {
-        final end = (start + pageSize).clamp(0, count);
+        final end = (start + pageSize).clamp(0, count).toInt();
         final assets =
-            await allAlbum.getAssetListRange(start: start, end: end);
+            await sourceAlbum.getAssetListRange(start: start, end: end);
         for (final asset in assets) {
           _assetCache[asset.id] = asset;
         }
-        loaded += assets.length;
       }
 
-      debugPrint('ImageLoaderService: Indexed $loaded images from gallery');
+      // If the album lookup fell through to the full gallery, post-filter by
+      // relativePath as a second line of defence.
+      if (_kTestAlbum != null && sourceAlbum.name != _kTestAlbum) {
+        // Diagnostic: sample relativePath of first few assets so we can see
+        // what photo_manager is actually surfacing.
+        final sample = _assetCache.values.take(5).toList();
+        for (final a in sample) {
+          debugPrint('  sample relativePath: "${a.relativePath}"');
+        }
+
+        final before = _assetCache.length;
+        _assetCache.removeWhere(
+          (_, asset) => !(asset.relativePath?.contains(_kTestAlbum!) ?? false),
+        );
+        debugPrint(
+          'ImageLoaderService: relativePath filter kept ${_assetCache.length} '
+          'of $before images',
+        );
+      }
+
+      debugPrint('ImageLoaderService: Indexed ${_assetCache.length} images');
     } catch (e) {
       debugPrint('ImageLoaderService: Failed to initialize: $e');
     }
@@ -117,6 +191,39 @@ class ImageLoaderService {
       }),
     );
     return results.whereType<ImageItem>().toList();
+  }
+
+  /// Inject a freshly-captured asset into the loader's caches without going
+  /// through a full MediaStore re-enumeration.
+  ///
+  /// Called after the in-app camera saves a new photo: the resulting
+  /// [AssetEntity] is resolved to an [ImageItem] and prepended to the cache
+  /// so subsequent calls to [loadDeviceImages] / [getAllImages] include it.
+  /// Returns the resolved item, or `null` if resolution failed (rare — only
+  /// happens if the asset's underlying file is gone).
+  Future<ImageItem?> addAsset(AssetEntity asset) async {
+    // Avoid duplicates if the caller invokes us twice for the same capture.
+    if (_assetCache.containsKey(asset.id)) {
+      try {
+        return _imageCache.firstWhere((img) => img.id == asset.id);
+      } catch (_) {
+        // Fall through to re-resolve.
+      }
+    }
+
+    final resolved = await _resolveAssets([asset]);
+    if (resolved.isEmpty) {
+      debugPrint('ImageLoaderService: addAsset failed to resolve ${asset.id}');
+      return null;
+    }
+
+    final item = resolved.first;
+    _assetCache[asset.id] = asset;
+    // Prepend so the new photo appears at the top of newest-first views.
+    _imageCache.insert(0, item);
+    debugPrint('ImageLoaderService: addAsset injected ${asset.id} '
+        '(cache now ${_imageCache.length})');
+    return item;
   }
 
   /// Load all images from the device gallery as [ImageItem] objects.

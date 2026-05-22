@@ -4,10 +4,12 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <!-- For Android 12 and below (API 32 and below) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
-    <!-- Camera — for image-to-image search via device camera -->
+    <!-- Camera — for image-to-image search and in-app capture -->
     <uses-permission android:name="android.permission.CAMERA"/>
-    <!-- Optional: For writing photos (not needed for read-only access) -->
-    <!-- <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/> -->
+    <!-- Write photos to the gallery (pre-Q only; Android 10+ uses scoped
+         storage via MediaStore and does not need this permission). Required
+         for PhotoManager.editor.saveImageWithPath on API 28 and below. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
 
     <application
         android:label="KitaKo"
