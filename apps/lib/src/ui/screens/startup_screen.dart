@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -252,6 +253,13 @@ class _StartupScreenState extends State<StartupScreen>
     _startInit();
   }
 
+  Future<void> _pickDirectory() async {
+    final path = await FilePicker.platform.getDirectoryPath();
+    if (path != null) {
+      widget.searchService.continueAfterNoImages(directoryPath: path);
+    }
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
@@ -464,6 +472,38 @@ class _StartupScreenState extends State<StartupScreen>
       );
     }
 
+    if (_progress.phase == IndexingPhase.noImagesFound) {
+      return _StatusCard(
+        palette: p,
+        icon: Icons.photo_library_outlined,
+        iconColor: _kAmber,
+        message: 'No images found',
+        detail: 'We couldn\'t find any images on this device. '
+            'You can browse your files to select a folder.',
+        actions: Row(
+          children: [
+            Expanded(
+              child: _PillButton(
+                palette: p,
+                label: 'Browse',
+                icon: Icons.folder_open_rounded,
+                onPressed: _pickDirectory,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _PillButton.outlined(
+                palette: p,
+                label: 'Skip',
+                onPressed: () => widget.searchService
+                    .continueAfterNoImages(),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (_progress.phase == IndexingPhase.embeddingPartialFailure) {
       final failed = _progress.failedCount ?? 0;
       return _StatusCard(
@@ -509,6 +549,7 @@ class _StartupScreenState extends State<StartupScreen>
       IndexingPhase.prewarmingVariants => 'Checking models…',
       IndexingPhase.restoringCache   => 'Picking up where we left off…',
       IndexingPhase.loadingGallery   => 'Scanning your gallery…',
+      IndexingPhase.noImagesFound    => 'No images found…',
       IndexingPhase.embedding        => done != null && total != null
           ? 'Organizing your photos · $done / $total'
           : 'Organizing your photos…',

@@ -17,6 +17,7 @@ enum IndexingPhase {
   prewarmingVariants,
   restoringCache,
   loadingGallery,
+  noImagesFound,
   embedding,
   embeddingPartialFailure,
   savingCache,
@@ -125,6 +126,10 @@ class ImageSearchService {
   /// Resolves to true (retry) or false (skip) when the UI responds to a partial
   /// embedding failure prompt.
   Completer<bool>? _embeddingFailureCompleter;
+
+  /// Resolves when the user responds to a [IndexingPhase.noImagesFound] prompt.
+  /// The string is the directory path chosen, or null to skip.
+  Completer<String?>? _noImagesCompleter;
 
   /// Current search state
   SearchState _currentState = const SearchState();
@@ -431,6 +436,29 @@ class ImageSearchService {
         },
       );
 
+      // If no images were found via MediaStore, let the user pick a directory.
+      if (_loadedImages.isEmpty) {
+        debugPrint('ImageSearchService: No images found — prompting user');
+        _noImagesCompleter = Completer<String?>();
+        _emitProgress(IndexingPhase.noImagesFound,
+            'No images found on this device');
+        final chosenDir = await _noImagesCompleter!.future;
+        _noImagesCompleter = null;
+
+        if (chosenDir != null) {
+          _emitProgress(IndexingPhase.loadingGallery,
+              'Scanning selected folder…');
+          final count =
+              await _imageLoader.loadImagesFromDirectory(chosenDir);
+          if (count > 0) {
+            _loadedImages = _imageLoader.getAllImages();
+            _imagesLoadedController.add(_loadedImages);
+            debugPrint('ImageSearchService: Directory scan loaded '
+                '$count images');
+          }
+        }
+      }
+
       _isInitialized = true;
 
       if (!embeddingInit) {
@@ -479,8 +507,37 @@ class ImageSearchService {
       );
     }
 
-    if (query.trim().isEmpty) {
+    final trimmed = query.trim();
+
+    if (trimmed.isEmpty) {
       _updateState(const SearchState());
+      return;
+    }
+
+    // Minimum length: single characters and very short strings rarely
+    // carry visual meaning and waste embedding compute.
+    if (trimmed.length < 2) {
+      _updateState(SearchState(
+        status: SearchStatus.noResults,
+        query: query,
+        queryConfidence: QueryConfidence.failed,
+        result: const SearchResult(images: [], scores: [], query: ''),
+      ));
+      return;
+    }
+
+    // Pre-embedding gibberish check: if most characters fall back to byte
+    // tokens, the query is random noise that the model was never trained on.
+    final fallbackRatio = _embeddingService.byteFallbackRatio(trimmed);
+    if (fallbackRatio > 0.7) {
+      debugPrint('ImageSearchService: Query rejected as gibberish '
+          '(byte-fallback ratio ${fallbackRatio.toStringAsFixed(2)})');
+      _updateState(SearchState(
+        status: SearchStatus.noResults,
+        query: query,
+        queryConfidence: QueryConfidence.failed,
+        result: const SearchResult(images: [], scores: [], query: ''),
+      ));
       return;
     }
 
@@ -896,6 +953,12 @@ class ImageSearchService {
     _embeddingFailureCompleter?.complete(retry);
   }
 
+  /// Called by the UI when the user responds to an [IndexingPhase.noImagesFound]
+  /// prompt. Pass a directory path to scan that folder, or null to skip.
+  void continueAfterNoImages({String? directoryPath}) {
+    _noImagesCompleter?.complete(directoryPath);
+  }
+
   // ========== Cleanup ==========
 
   /// Dispose of all resources
@@ -931,15 +994,9 @@ class ImageSearchService {
   }) {
     if (results.isEmpty) return results;
 
-    // TEMP: threshold filtering disabled for testing — return all raw results
-    debugPrint('ImageSearchService: Filter DISABLED — returning all ${results.length} raw results');
-    return results;
-
     // For image-image: use a fixed 0.60 floor, no relative cutoff.
     // For text-image: use the configured absolute + relative thresholds.
-    // ignore: dead_code
     const double imageAbsFloor = 0.60;
-    // ignore: dead_code
     final double absFloor = isImageSearch ? imageAbsFloor : absoluteThreshold;
 
     final aboveFloor = results
@@ -961,9 +1018,24 @@ class ImageSearchService {
     // Text search: additional relative cutoff
     final bestScore = aboveFloor.first.similarity;
     final cutoff = bestScore * relativeThreshold;
-    final filtered = aboveFloor
+    var filtered = aboveFloor
         .where((r) => r.similarity >= cutoff)
         .toList();
+
+    // Score gap detection: if the top-10 scores have near-zero spread,
+    // the query has no discriminative power (gibberish or nonsensical).
+    // Real queries produce a visible drop-off between relevant and
+    // irrelevant images; flat scores mean everything is equally irrelevant.
+    if (filtered.length >= 5) {
+      final top = filtered.first.similarity;
+      final fifth = filtered[4].similarity;
+      final spread = top - fifth;
+      if (spread < 0.003) {
+        debugPrint('ImageSearchService: Score gap too small '
+            '(top=$top, 5th=$fifth, spread=$spread) — no discriminative power');
+        return [];
+      }
+    }
 
     debugPrint('ImageSearchService: Text filter: '
         '${results.length} raw → ${aboveFloor.length} above floor ($absFloor) '

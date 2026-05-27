@@ -44,6 +44,8 @@ class ImageLoaderService {
     '.gif',
     '.bmp',
     '.webp',
+    '.heic',
+    '.heif',
   ];
 
   /// Initialize: request permission and enumerate all gallery images.
@@ -74,8 +76,47 @@ class ImageLoaderService {
         ),
       );
 
-      if (albums.isEmpty) {
-        debugPrint('ImageLoaderService: No photo albums found on device');
+      if (albums.isEmpty || await albums.first.assetCountAsync == 0) {
+        debugPrint('ImageLoaderService: "All Photos" album empty — '
+            'trying individual albums');
+        final individual = await PhotoManager.getAssetPathList(
+          type: RequestType.image,
+          hasAll: false,
+          onlyAll: false,
+          filterOption: FilterOptionGroup(
+            orders: [
+              const OrderOption(type: OrderOptionType.createDate, asc: false),
+            ],
+          ),
+        );
+        if (individual.isEmpty) {
+          debugPrint('ImageLoaderService: No photo albums found on device');
+          _isInitialized = true;
+          return true;
+        }
+        // Merge assets from all individual albums (deduplicated by asset ID).
+        for (final album in individual) {
+          final count = await album.assetCountAsync;
+          if (count == 0) continue;
+          debugPrint('ImageLoaderService: Scanning album "${album.name}" '
+              '($count images)');
+          const pageSize = 200;
+          for (int start = 0; start < count; start += pageSize) {
+            final end = (start + pageSize).clamp(0, count).toInt();
+            final assets =
+                await album.getAssetListRange(start: start, end: end);
+            for (final asset in assets) {
+              _assetCache.putIfAbsent(asset.id, () => asset);
+            }
+          }
+        }
+        if (_assetCache.isNotEmpty) {
+          debugPrint('ImageLoaderService: Individual album scan found '
+              '${_assetCache.length} images');
+          _isInitialized = true;
+          return true;
+        }
+        debugPrint('ImageLoaderService: All albums empty');
         _isInitialized = true;
         return true;
       }
@@ -405,6 +446,44 @@ class ImageLoaderService {
           'ImageLoaderService: Cleared $cleared thumbnail buffers');
     }
     return cleared;
+  }
+
+  /// Scan a user-chosen directory for image files and add them to the cache.
+  /// Returns the number of new images found.
+  Future<int> loadImagesFromDirectory(String dirPath) async {
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) return 0;
+
+    int added = 0;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      if (!isImageSupported(entity.path)) continue;
+
+      final id = 'dir_${entity.path.hashCode}';
+      if (_assetCache.containsKey(id) ||
+          _imageCache.any((img) => img.id == id)) {
+        continue;
+      }
+
+      try {
+        final stat = await entity.stat();
+        final item = ImageItem(
+          id: id,
+          path: entity.path,
+          createdAt: stat.changed,
+          modifiedAt: stat.modified,
+          sizeBytes: stat.size,
+        );
+        _imageCache.add(item);
+        added++;
+      } catch (e) {
+        debugPrint('ImageLoaderService: Skipped ${entity.path}: $e');
+      }
+    }
+
+    debugPrint('ImageLoaderService: Directory scan found $added new images '
+        'in $dirPath');
+    return added;
   }
 
   void dispose() {

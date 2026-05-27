@@ -80,6 +80,11 @@ class EmbeddingService {
   String get imageEp => _onnxClient?.imageEp ?? 'cpu';
   String get textEp => _onnxClient?.textEp ?? 'cpu';
 
+  /// Returns the byte-fallback ratio for the given text. Returns 0.0 if no
+  /// ONNX backend is loaded (assumes the query is valid).
+  double byteFallbackRatio(String text) =>
+      _onnxClient?.byteFallbackRatio(text) ?? 0.0;
+
   /// Whether text embedding is available (requires a real model)
   bool get isTextReady {
     if (_activeBackend == EmbeddingBackend.onnx) {

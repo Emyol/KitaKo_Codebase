@@ -109,6 +109,13 @@ packages:
       relative: true
     source: path
     version: "0.0.1"
+  kitako_core:
+    dependency: transitive
+    description:
+      path: "../packages/kitako_core"
+      relative: true
+    source: path
+    version: "0.0.1"
   kitako_embedding:
     dependency: "direct main"
     description:

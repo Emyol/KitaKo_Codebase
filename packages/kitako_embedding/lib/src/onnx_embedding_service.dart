@@ -55,6 +55,10 @@ class OnnxEmbeddingService {
     _isInitialized = true;
   }
 
+  /// Returns the byte-fallback ratio for the given text (0.0 = all known
+  /// tokens, 1.0 = all byte-fallback). See [GemmaTokenizer.byteFallbackRatio].
+  double byteFallbackRatio(String text) => _tokenizer.byteFallbackRatio(text);
+
   /// Generates a normalized embedding for raw image bytes.
   Future<Float32List> embedImage(Uint8List imageBytes) async {
     if (!isImageEncoderReady) {
