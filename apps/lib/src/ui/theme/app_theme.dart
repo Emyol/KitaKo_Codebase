@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 class AppColors {
   AppColors._();
 
-  // ── Dark mode tokens ────────────────────────────────────────────────────────
+  // -- Dark mode tokens --------------------------------------------------------
   static const Color darkBg         = Color(0xFF0E1116);
   static const Color darkBgDeep     = Color(0xFF070A0E);
   static const Color darkSurface    = Color(0xFF161B22);
@@ -27,7 +27,7 @@ class AppColors {
   static const Color darkChipBg     = Color(0x243B82F6); // rgba(59,130,246,0.14)
   static const Color darkChipText   = Color(0xFF93C5FD);
 
-  // ── Light mode tokens ───────────────────────────────────────────────────────
+  // -- Light mode tokens -------------------------------------------------------
   static const Color lightBg         = Color(0xFFF4F7FB);
   static const Color lightBgDeep     = Color(0xFFE8EEF6);
   static const Color lightSurface    = Color(0xFFFFFFFF);
@@ -50,7 +50,7 @@ class AppColors {
   static const Color lightChipBg     = Color(0xFFDBEAFE);
   static const Color lightChipText   = Color(0xFF1D4ED8);
 
-  // ── Convenience getters (context-free, for static declarations) ─────────────
+  // -- Convenience getters (context-free, for static declarations) -------------
   static Color bg(bool isDark)         => isDark ? darkBg         : lightBg;
   static Color bgDeep(bool isDark)     => isDark ? darkBgDeep     : lightBgDeep;
   static Color surface(bool isDark)    => isDark ? darkSurface    : lightSurface;

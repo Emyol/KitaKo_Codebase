@@ -17,6 +17,7 @@ enum IndexingPhase {
   prewarmingVariants,
   restoringCache,
   loadingGallery,
+  noImagesFound,
   embedding,
   embeddingPartialFailure,
   savingCache,
@@ -125,6 +126,10 @@ class ImageSearchService {
   /// Resolves to true (retry) or false (skip) when the UI responds to a partial
   /// embedding failure prompt.
   Completer<bool>? _embeddingFailureCompleter;
+
+  /// Resolves when the user responds to a [IndexingPhase.noImagesFound] prompt.
+  /// The string is the directory path chosen, or null to skip.
+  Completer<String?>? _noImagesCompleter;
 
   /// Current search state
   SearchState _currentState = const SearchState();
@@ -319,6 +324,11 @@ class ImageSearchService {
   /// "100" or "All" still only ever surfaces this many results.
   int topK = 100;
 
+  /// When non-null, bypasses the combo filter and always returns this many
+  /// results (or fewer if the index has fewer images). Results may include
+  /// low-scoring images that don't visually match the query.
+  int? forceTopN;
+
   /// Absolute floor: any result below this cosine similarity is discarded.
   ///
   /// Observed score ranges for Kitako INT8 model:
@@ -431,6 +441,29 @@ class ImageSearchService {
         },
       );
 
+      // If no images were found via MediaStore, let the user pick a directory.
+      if (_loadedImages.isEmpty) {
+        debugPrint('ImageSearchService: No images found — prompting user');
+        _noImagesCompleter = Completer<String?>();
+        _emitProgress(IndexingPhase.noImagesFound,
+            'No images found on this device');
+        final chosenDir = await _noImagesCompleter!.future;
+        _noImagesCompleter = null;
+
+        if (chosenDir != null) {
+          _emitProgress(IndexingPhase.loadingGallery,
+              'Scanning selected folder…');
+          final count =
+              await _imageLoader.loadImagesFromDirectory(chosenDir);
+          if (count > 0) {
+            _loadedImages = _imageLoader.getAllImages();
+            _imagesLoadedController.add(_loadedImages);
+            debugPrint('ImageSearchService: Directory scan loaded '
+                '$count images');
+          }
+        }
+      }
+
       _isInitialized = true;
 
       if (!embeddingInit) {
@@ -479,8 +512,37 @@ class ImageSearchService {
       );
     }
 
-    if (query.trim().isEmpty) {
+    final trimmed = query.trim();
+
+    if (trimmed.isEmpty) {
       _updateState(const SearchState());
+      return;
+    }
+
+    // Minimum length: single characters and very short strings rarely
+    // carry visual meaning and waste embedding compute.
+    if (trimmed.length < 2) {
+      _updateState(SearchState(
+        status: SearchStatus.noResults,
+        query: query,
+        queryConfidence: QueryConfidence.failed,
+        result: const SearchResult(images: [], scores: [], query: ''),
+      ));
+      return;
+    }
+
+    // Pre-embedding gibberish check: if most characters fall back to byte
+    // tokens, the query is random noise that the model was never trained on.
+    final fallbackRatio = _embeddingService.byteFallbackRatio(trimmed);
+    if (fallbackRatio > 0.7) {
+      debugPrint('ImageSearchService: Query rejected as gibberish '
+          '(byte-fallback ratio ${fallbackRatio.toStringAsFixed(2)})');
+      _updateState(SearchState(
+        status: SearchStatus.noResults,
+        query: query,
+        queryConfidence: QueryConfidence.failed,
+        result: const SearchResult(images: [], scores: [], query: ''),
+      ));
       return;
     }
 
@@ -510,16 +572,18 @@ class ImageSearchService {
       // Oversample so dataset filtering still leaves >= k candidates when
       // the active dataset is sparsely represented in the global top-k.
       final searchSw = Stopwatch()..start();
+      final forceN = forceTopN;
+      final effectiveK = forceN ?? k;
       final raw = await _annSearch.searchSimilarWithScores(
         queryEmbedding,
-        k: k * 8,
+        k: effectiveK * 8,
         threshold: -1.0,
       );
       searchSw.stop();
 
-      // Step 3: Take top-k, then apply combo filter.
-      final scoped = raw.take(k).toList();
-      final filtered = _applyComboFilter(scoped);
+      // Step 3: Take top-k, then apply combo filter (or bypass if forceTopN).
+      final scoped = raw.take(effectiveK).toList();
+      final filtered = forceN != null ? scoped : _applyComboFilter(scoped);
 
       // Step 4: Collect results (thumbnails are loaded lazily by the grid).
       final imagesWithThumbnails = filtered.map((r) => r.image).toList();
@@ -668,7 +732,7 @@ class ImageSearchService {
       // Update to searching state with query image
       _updateState(SearchState(
         status: SearchStatus.searching,
-        query: '[Image Search]',
+        query: '',
         queryImage: queryImageBytes,
       ));
 
@@ -682,15 +746,18 @@ class ImageSearchService {
 
       // Step 2: Search with scores. Oversample so dataset filtering leaves
       // enough candidates when the active dataset is sparsely represented.
+      final forceN = forceTopN;
+      final effectiveK = forceN ?? k;
       final raw = await _annSearch.searchSimilarWithScores(
         queryEmbedding,
-        k: k * 8,
+        k: effectiveK * 8,
         threshold: -1.0,
       );
 
-      // Step 3: Take top-k, then apply combo filter.
-      final scoped = raw.take(k).toList();
-      final filtered = _applyComboFilter(scoped, isImageSearch: true);
+      // Step 3: Take top-k, then apply combo filter (or bypass if forceTopN).
+      final scoped = raw.take(effectiveK).toList();
+      final filtered =
+          forceN != null ? scoped : _applyComboFilter(scoped, isImageSearch: true);
 
       // Step 4: Collect results (thumbnails are loaded lazily by the grid).
       final imagesWithThumbnails = filtered.map((r) => r.image).toList();
@@ -706,21 +773,21 @@ class ImageSearchService {
         _updateState(
           SearchState(
             status: SearchStatus.noResults,
-            query: '[Image Search]',
+            query: '',
             queryImage: queryImageBytes,
-            result: const SearchResult(images: [], scores: [], query: '[Image Search]'),
+            result: const SearchResult(images: [], scores: [], query: ''),
           ),
         );
       } else {
         _updateState(
           SearchState(
             status: SearchStatus.success,
-            query: '[Image Search]',
+            query: '',
             queryImage: queryImageBytes,
             result: SearchResult(
               images: imagesWithThumbnails,
               scores: scores,
-              query: '[Image Search]',
+              query: '',
             ),
           ),
         );
@@ -730,7 +797,7 @@ class ImageSearchService {
       _updateState(
         SearchState(
           status: SearchStatus.error,
-          query: '[Image Search]',
+          query: '',
           queryImage: queryImageBytes,
           error: e.toString(),
         ),
@@ -896,6 +963,12 @@ class ImageSearchService {
     _embeddingFailureCompleter?.complete(retry);
   }
 
+  /// Called by the UI when the user responds to an [IndexingPhase.noImagesFound]
+  /// prompt. Pass a directory path to scan that folder, or null to skip.
+  void continueAfterNoImages({String? directoryPath}) {
+    _noImagesCompleter?.complete(directoryPath);
+  }
+
   // ========== Cleanup ==========
 
   /// Dispose of all resources
@@ -915,14 +988,16 @@ class ImageSearchService {
   /// Apply relevance filter to search results.
   ///
   /// **Text search** (isImageSearch = false):
-  ///   Uses absolute floor + relative cutoff. Scores cluster tightly
-  ///   (~0.08–0.11), so a 90% relative threshold keeps only genuine matches.
+  ///   Uses absolute floor + relative cutoff + score gap detection.
+  ///   Scores cluster tightly (~0.08–0.11), so a 90% relative threshold
+  ///   keeps only genuine matches.
   ///
   /// **Image search** (isImageSearch = true):
-  ///   Uses absolute floor only (no relative cutoff). The top result is
-  ///   always the self-match (score ≈ 1.0), which would set a cutoff of
-  ///   ≥0.90 and eliminate all real similar images at ~0.66–0.68. Instead,
-  ///   a fixed 0.60 floor keeps all genuinely similar images.
+  ///   Uses absolute floor + relative cutoff + score gap detection, but
+  ///   skips the self-match (score > 0.95) before computing the relative
+  ///   cutoff. Without this, the self-match at ~1.0 would set a cutoff of
+  ///   ~0.90 and eliminate all real similar images at ~0.66–0.68. The
+  ///   relative threshold is applied against the best *non-self* score.
   ///
   /// The input list must already be sorted by similarity descending.
   List<SearchResultWithScore> _applyComboFilter(
@@ -931,15 +1006,7 @@ class ImageSearchService {
   }) {
     if (results.isEmpty) return results;
 
-    // TEMP: threshold filtering disabled for testing — return all raw results
-    debugPrint('ImageSearchService: Filter DISABLED — returning all ${results.length} raw results');
-    return results;
-
-    // For image-image: use a fixed 0.60 floor, no relative cutoff.
-    // For text-image: use the configured absolute + relative thresholds.
-    // ignore: dead_code
     const double imageAbsFloor = 0.60;
-    // ignore: dead_code
     final double absFloor = isImageSearch ? imageAbsFloor : absoluteThreshold;
 
     final aboveFloor = results
@@ -953,17 +1020,69 @@ class ImageSearchService {
     }
 
     if (isImageSearch) {
+      // Separate self-match (score > 0.95) from real candidates.
+      const double selfMatchThreshold = 0.95;
+      final selfMatches = aboveFloor
+          .where((r) => r.similarity > selfMatchThreshold)
+          .toList();
+      final candidates = aboveFloor
+          .where((r) => r.similarity <= selfMatchThreshold)
+          .toList();
+
+      if (candidates.isEmpty) {
+        debugPrint('ImageSearchService: Image filter: '
+            '${results.length} raw → ${selfMatches.length} self-match only, '
+            'no similar images above floor ($absFloor)');
+        return selfMatches;
+      }
+
+      // Relative cutoff against best non-self score
+      final bestCandidateScore = candidates.first.similarity;
+      final cutoff = bestCandidateScore * relativeThreshold;
+      var filtered = candidates
+          .where((r) => r.similarity >= cutoff)
+          .toList();
+
+      // Score gap detection on non-self candidates
+      if (filtered.length >= 5) {
+        final top = filtered.first.similarity;
+        final fifth = filtered[4].similarity;
+        final spread = top - fifth;
+        if (spread < 0.003) {
+          debugPrint('ImageSearchService: Image score gap too small '
+              '(top=$top, 5th=$fifth, spread=$spread) — no discriminative power');
+          return selfMatches;
+        }
+      }
+
       debugPrint('ImageSearchService: Image filter: '
-          '${results.length} raw → ${aboveFloor.length} above floor ($absFloor)');
-      return aboveFloor;
+          '${results.length} raw → ${aboveFloor.length} above floor ($absFloor) '
+          '→ ${selfMatches.length} self-match + ${filtered.length} similar '
+          '(${(relativeThreshold * 100).toStringAsFixed(0)}% of best '
+          '${bestCandidateScore.toStringAsFixed(3)} = ${cutoff.toStringAsFixed(3)})');
+
+      return [...selfMatches, ...filtered];
     }
 
-    // Text search: additional relative cutoff
+    // Text search: relative cutoff against best score
     final bestScore = aboveFloor.first.similarity;
     final cutoff = bestScore * relativeThreshold;
-    final filtered = aboveFloor
+    var filtered = aboveFloor
         .where((r) => r.similarity >= cutoff)
         .toList();
+
+    // Score gap detection: if the top-10 scores have near-zero spread,
+    // the query has no discriminative power (gibberish or nonsensical).
+    if (filtered.length >= 5) {
+      final top = filtered.first.similarity;
+      final fifth = filtered[4].similarity;
+      final spread = top - fifth;
+      if (spread < 0.003) {
+        debugPrint('ImageSearchService: Score gap too small '
+            '(top=$top, 5th=$fifth, spread=$spread) — no discriminative power');
+        return [];
+      }
+    }
 
     debugPrint('ImageSearchService: Text filter: '
         '${results.length} raw → ${aboveFloor.length} above floor ($absFloor) '
@@ -1010,7 +1129,7 @@ class ImageSearchService {
 
       final imagesToProcess = allImages.toList();
 
-      // ── Step 1: Try loading cached embeddings from storage layer ──
+      // -- Step 1: Try loading cached embeddings from storage layer --
       final visionEncoderId =
           _embeddingService.activeVariant?.visionEncoderId ?? 'unknown';
       _emitProgress(IndexingPhase.restoringCache,
@@ -1039,7 +1158,7 @@ class ImageSearchService {
         }
       }
 
-      // ── Step 2: Find images that need embedding ──
+      // -- Step 2: Find images that need embedding --
       // Sort newest-first so recently taken photos appear in search ASAP.
       final newImages = imagesToProcess
           .where((img) => !cachedIds.contains(img.id))
@@ -1081,7 +1200,7 @@ class ImageSearchService {
         return;
       }
 
-      // ── Step 3: Embed only new images ──
+      // -- Step 3: Embed only new images --
       final stopwatch = Stopwatch()..start();
       final newlyIndexed = <ImageItem>[];
       final newEmbeddings = <List<double>>[];
@@ -1152,7 +1271,7 @@ class ImageSearchService {
           }
         }
 
-        // ── Progress ───────────────────────────────────────────────────────
+        // -- Progress -------------------------------------------------------
         final total = newImages.length;
         final percent = (batchEnd / total * 100).toStringAsFixed(1);
         final elapsedSec = stopwatch.elapsed.inSeconds;
@@ -1169,7 +1288,7 @@ class ImageSearchService {
         final empty = barWidth - filled;
         final bar = '${'█' * filled}${'░' * empty}';
 
-        // ── Thermal throttling detection ────────────────────────────────────
+        // -- Thermal throttling detection ------------------------------------
         // Lock in baseline after kBaselineSampleSize successful embeds.
         if (baselineAvgMs == null && successCount >= kBaselineSampleSize) {
           baselineAvgMs = currentAvgMs;
@@ -1191,7 +1310,7 @@ class ImageSearchService {
           total: total,
         );
 
-        // ── Checkpoint every 50 images ──────────────────────────────────────
+        // -- Checkpoint every 50 images --------------------------------------
         if (successCount - lastCheckpointCount >= 50) {
           lastCheckpointCount = successCount;
           await _annSearch.indexBatch(newlyIndexed, newEmbeddings);
@@ -1257,10 +1376,10 @@ class ImageSearchService {
       debugPrint('╚══════════════════════════════════════════════════════╝');
       debugPrint('');
 
-      // ── Step 4: Save cache ──
+      // -- Step 4: Save cache --
       await _saveEmbeddingCache();
 
-      // ── Step 5: Load thumbnails and notify ──
+      // -- Step 5: Load thumbnails and notify --
       // Build the full list of indexed images (cached + new)
       final allIndexedImages = imagesToProcess
           .where((img) => cachedIds.contains(img.id) || newlyIndexed.any((n) => n.id == img.id))

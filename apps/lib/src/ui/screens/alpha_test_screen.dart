@@ -1,10 +1,11 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:kitako_ann/kitako_ann.dart' as ann;
 import '../../models/search_models.dart';
 import '../../services/image_search_service.dart';
 import '../../services/embedding_service.dart';
 
+import '../theme/palette.dart';
 /// Available search algorithm modes for the alpha test screen.
 enum _SearchMethod {
   bruteForce('Brute Force', Icons.list_alt),
@@ -43,10 +44,8 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
 
   _SearchMethod _searchMethod = _SearchMethod.bruteForce;
 
-  // â”€â”€ HNSW tuning state â”€â”€
   double _hnswEf = 50;
 
-  // â”€â”€ IVF-PQ tuning state â”€â”€
   bool _ivfAdvancedExpanded = false;
   // Staged values for retrain (committed when the user taps Retrain).
   int? _ivfClustersStaged;
@@ -61,13 +60,11 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   SearchState _lastState = const SearchState();
   Map<String, dynamic>? _recallResult;
 
-  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   EmbeddingService get _embedding => widget.searchService.embeddingService;
 
   Map<String, dynamic> get _indexStatus => widget.searchService.annIndexStatus;
 
-  // â”€â”€ Algorithm selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _applySearchMethod(_SearchMethod method) {
     setState(() => _searchMethod = method);
@@ -83,7 +80,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // â”€â”€ IVF-PQ retrain â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _retrainIvfpq() async {
     if (_retrainingIvfpq) return;
@@ -109,7 +105,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // â”€â”€ Model switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _switchModel(ModelVariant variant) async {
     if (_switchingModel) return;
@@ -126,7 +121,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // â”€â”€ Search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _runQuery() async {
     final query = _queryController.text.trim();
@@ -172,7 +166,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // â”€â”€ Recall@K accuracy test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _runRecallTest() async {
     final query = _queryController.text.trim();
@@ -209,7 +202,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
     }
   }
 
-  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @override
   void dispose() {
@@ -237,7 +229,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
       ),
       body: Column(
         children: [
-          // â”€â”€ Settings Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_headerVisible)
           Container(
             color: surfaceColor,
@@ -254,7 +245,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white70 : Colors.black54,
+                          color: P.textDim(isDark),
                         ),
                       ),
                     ),
@@ -357,7 +348,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                             : 'No model loaded',
                         style: TextStyle(
                           fontSize: 12,
-                          color: isDark ? Colors.white54 : Colors.black54,
+                          color: P.textMore(isDark),
                         ),
                       ),
                     ),
@@ -374,14 +365,12 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
             ),
           ),
 
-          // â”€â”€ Header toggle strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           _HeaderToggleStrip(
             visible: _headerVisible,
             onToggle: () => setState(() => _headerVisible = !_headerVisible),
             isDark: isDark,
           ),
 
-          // â”€â”€ Query Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
             child: Row(
@@ -435,7 +424,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
             ),
           ),
 
-          // â”€â”€ Stats Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_lastState.status != SearchStatus.idle)
             Container(
               color: isDark
@@ -472,7 +460,7 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
                         'â†’ "${_lastState.normalizedQuery}"',
                         style: TextStyle(
                           fontSize: 11,
-                          color: isDark ? Colors.white38 : Colors.black38,
+                          color: P.textFaint(isDark),
                           fontStyle: FontStyle.italic,
                         ),
                         overflow: TextOverflow.ellipsis,
@@ -483,11 +471,9 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
               ),
             ),
 
-          // â”€â”€ Recall result banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_recallResult != null)
             _RecallBanner(result: _recallResult!, isDark: isDark),
 
-          // â”€â”€ Per-query diagnostics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (_lastState.status != SearchStatus.idle)
             _DiagnosticsPanel(
               embeddingTimeMs: _lastState.result?.embeddingTimeMs,
@@ -501,7 +487,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
 
           const Divider(height: 1),
 
-          // â”€â”€ Results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           Expanded(
             child: hasError
                 ? _ErrorPanel(message: _lastState.error ?? 'Unknown error')
@@ -532,7 +517,6 @@ class _AlphaTestScreenState extends State<AlphaTestScreen> {
   }
 }
 
-// â”€â”€ ANN status row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _AnnStatusRow extends StatelessWidget {
   final Map<String, dynamic> indexStatus;
@@ -552,7 +536,7 @@ class _AnnStatusRow extends StatelessWidget {
     final ivfSize = indexStatus['ivfpqSize'] as int? ?? 0;
     final ivfTrained = indexStatus['ivfpqTrained'] as bool? ?? false;
     final pending = indexStatus['pendingVectors'] as int? ?? 0;
-    final color = isDark ? Colors.white54 : Colors.black54;
+    final color = P.textMore(isDark);
 
     String hnswLabel;
     if (!hnswInit) {
@@ -590,9 +574,7 @@ class _AnnStatusRow extends StatelessWidget {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Algorithm selector â€” 3-button row (face-branch style adapted to v2 services)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _AlgorithmSelector extends StatelessWidget {
   final _SearchMethod selected;
@@ -715,7 +697,7 @@ class _AlgorithmButton extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 color: isSelected
                     ? option.color
-                    : (isDark ? Colors.white70 : Colors.black87),
+                    : (P.textDim(isDark)),
               ),
             ),
             Text(
@@ -734,9 +716,7 @@ class _AlgorithmButton extends StatelessWidget {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // HNSW tuner â€” runtime ef slider
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _HnswTunerPanel extends StatelessWidget {
   final double ef;
@@ -823,9 +803,7 @@ class _HnswTunerPanel extends StatelessWidget {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // IVF-PQ tuner â€” staged params + retrain
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _IvfpqTunerPanel extends StatelessWidget {
   final ann.IvfPqConfig? activeConfig;
@@ -924,7 +902,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
                 'nProbes (search breadth)',
                 style: TextStyle(
                   fontSize: 11,
-                  color: isDark ? Colors.white70 : Colors.black87,
+                  color: P.textDim(isDark),
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -999,7 +977,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
               'Clusters (IVF partitions)',
               style: TextStyle(
                 fontSize: 10,
-                color: isDark ? Colors.white70 : Colors.black54,
+                color: P.textDim(isDark),
               ),
             ),
             const SizedBox(height: 4),
@@ -1027,7 +1005,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
                   'Sub-quantizers: ',
                   style: TextStyle(
                     fontSize: 10,
-                    color: isDark ? Colors.white70 : Colors.black54,
+                    color: P.textDim(isDark),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1038,7 +1016,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
                     isDense: true,
                     style: TextStyle(
                       fontSize: 12,
-                      color: isDark ? Colors.white : Colors.black87,
+                      color: P.text(isDark),
                     ),
                     items: validSubquantizers.map((n) {
                       return DropdownMenuItem(
@@ -1064,7 +1042,7 @@ class _IvfpqTunerPanel extends StatelessWidget {
                   'Training iterations',
                   style: TextStyle(
                     fontSize: 10,
-                    color: isDark ? Colors.white70 : Colors.black54,
+                    color: P.textDim(isDark),
                   ),
                 ),
                 Text(
@@ -1181,7 +1159,6 @@ class _AnnChip extends StatelessWidget {
   }
 }
 
-// â”€â”€ Recall banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _RecallBanner extends StatelessWidget {
   final Map<String, dynamic> result;
@@ -1228,7 +1205,6 @@ class _RecallBanner extends StatelessWidget {
   }
 }
 
-// â”€â”€ Diagnostics panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _DiagnosticsPanel extends StatelessWidget {
   final int? embeddingTimeMs;
@@ -1310,8 +1286,8 @@ class _DiagnosticsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final labelColor = isDark ? Colors.white38 : Colors.black38;
-    final valueColor = isDark ? Colors.white70 : Colors.black87;
+    final labelColor = P.textFaint(isDark);
+    final valueColor = P.textDim(isDark);
     final hintColor = isDark ? Colors.white24 : Colors.black26;
     final bgColor = isDark ? const Color(0xFF1A1F2A) : const Color(0xFFEEF2FF);
     final borderColor =
@@ -1402,7 +1378,6 @@ class _DiagnosticsPanel extends StatelessWidget {
   }
 }
 
-// â”€â”€ Sub-widgets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _StatChip extends StatelessWidget {
   final String label;
@@ -1417,7 +1392,7 @@ class _StatChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = isDark ? Colors.white54 : Colors.black54;
+    final color = P.textMore(isDark);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1547,7 +1522,7 @@ class _EmptyPanel extends StatelessWidget {
           Text(
             message,
             style: TextStyle(
-              color: isDark ? Colors.white38 : Colors.black38,
+              color: P.textFaint(isDark),
               fontSize: 14,
             ),
           ),
@@ -1557,7 +1532,6 @@ class _EmptyPanel extends StatelessWidget {
   }
 }
 
-// â”€â”€ Header toggle strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _HeaderToggleStrip extends StatelessWidget {
   final bool visible;
@@ -1583,14 +1557,14 @@ class _HeaderToggleStrip extends StatelessWidget {
             Icon(
               visible ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
               size: 16,
-              color: isDark ? Colors.white38 : Colors.black38,
+              color: P.textFaint(isDark),
             ),
             const SizedBox(width: 4),
             Text(
               visible ? 'Hide settings' : 'Show settings',
               style: TextStyle(
                 fontSize: 10,
-                color: isDark ? Colors.white38 : Colors.black38,
+                color: P.textFaint(isDark),
               ),
             ),
           ],
@@ -1600,7 +1574,6 @@ class _HeaderToggleStrip extends StatelessWidget {
   }
 }
 
-// â”€â”€ Full image viewer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _FullImageViewer extends StatelessWidget {
   final ImageItem image;

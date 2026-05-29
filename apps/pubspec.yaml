@@ -56,6 +56,9 @@ dependencies:
   
   # Image picker for image-to-image search
   image_picker: ^1.1.2
+
+  # Directory picker for manual image source selection
+  file_picker: ^8.0.0
   
   # ONNX Runtime for ML inference
   onnxruntime_v2: ^1.23.2

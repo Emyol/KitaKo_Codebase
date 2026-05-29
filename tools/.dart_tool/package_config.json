@@ -86,6 +86,12 @@
       "languageVersion": "3.10"
     },
     {
+      "name": "kitako_core",
+      "rootUri": "../../packages/kitako_core",
+      "packageUri": "lib/",
+      "languageVersion": "3.10"
+    },
+    {
       "name": "kitako_embedding",
       "rootUri": "../../packages/kitako_embedding",
       "packageUri": "lib/",

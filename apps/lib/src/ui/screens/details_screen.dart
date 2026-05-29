@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/search_models.dart';
 import '../../services/image_search_service.dart';
+import 'results_screen.dart';
 
+import '../theme/palette.dart';
 class DetailsScreen extends StatefulWidget {
   final ImageItem image;
   final ImageSearchService searchService;
@@ -76,12 +78,29 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final bytes = await File(image.path).readAsBytes();
         await widget.searchService.searchByImage(bytes.toList());
       }
-      if (mounted) {
-        int popsLeft = widget.popCount;
-        while (popsLeft > 0 && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-          popsLeft--;
-        }
+      if (!mounted) return;
+
+      // Pop intermediate routes (e.g. the previous Results screen) so the new
+      // image-similarity Results sits cleanly above the originating screen.
+      final navigator = Navigator.of(context);
+      int popsLeft = widget.popCount;
+      while (popsLeft > 0 && navigator.canPop()) {
+        navigator.pop();
+        popsLeft--;
+      }
+
+      final state = widget.searchService.currentState;
+      final result = state.result;
+      if (result != null) {
+        await navigator.push(
+          MaterialPageRoute(
+            builder: (_) => ResultsScreen(
+              searchResult: result,
+              searchService: widget.searchService,
+              queryImage: state.queryImage,
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (!mounted) return;
@@ -97,18 +116,18 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Dark: black canvas, light top overlay, dark metadata panel
-    // Light: light canvas, solid white top bar, light metadata panel
-    final canvasBg    = isDark ? Colors.black : const Color(0xFFF4F7FB);
-    final topBarBg    = isDark
-        ? const Color(0x59000000)   // rgba(0,0,0,0.35)
-        : Colors.white;
-    final iconColor   = isDark ? Colors.white : const Color(0xFF0F172A);
-    final metaBg      = isDark ? const Color(0xFF0E1116) : Colors.white;
-    final metaBorder  = isDark
-        ? const Color(0x0FFFFFFF)   // rgba(255,255,255,0.06)
-        : const Color(0x0F000000);
-    final blue        = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
+    // Canvas / top-bar / metadata panel all routed through the palette so
+    // the page recolors with girly-pop. Photo viewer overlays (nav arrows,
+    // counter pill, broken-image fallback) stay neutral dark since they
+    // sit on top of arbitrary photos and need to read regardless of theme.
+    final canvasBg    = P.girly ? P.bg(isDark) : (isDark ? Colors.black : const Color(0xFFF4F7FB));
+    final topBarBg    = P.girly
+        ? P.surface(isDark)
+        : (isDark ? const Color(0x59000000) : Colors.white);
+    final iconColor   = P.text(isDark);
+    final metaBg      = P.surface(isDark);
+    final metaBorder  = P.border(isDark);
+    final blue        = P.accent(isDark);
 
     final hasPrev = _currentIndex > 0;
     final hasNext = _currentIndex < _images.length - 1;
@@ -122,7 +141,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           bottom: false,
           child: Column(
             children: [
-              // ── Top bar (back + filename + find-similar) ───────────────
+              // -- Top bar (back + filename + find-similar) ---------------
               Container(
                 color: topBarBg,
                 padding: const EdgeInsets.symmetric(
@@ -152,7 +171,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
 
-              // ── Image area ─────────────────────────────────────────────
+              // -- Image area ---------------------------------------------
               Expanded(
                 child: Stack(
                   fit: StackFit.expand,
@@ -224,7 +243,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
 
-              // ── Metadata panel ─────────────────────────────────────────
+              // -- Metadata panel -----------------------------------------
               SafeArea(
                 top: false,
                 child: _MetadataPanel(
@@ -245,7 +264,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 }
 
-// ── Sub-widgets ────────────────────────────────────────────────────────────────
+// -- Sub-widgets ----------------------------------------------------------------
 
 class _NavButton extends StatelessWidget {
   final IconData icon;
@@ -324,18 +343,10 @@ class _MetadataPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Dark: white text at varying opacities (design spec)
-    // Light: dark text at standard opacities
-    final titleColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final dateColor  = isDark
-        ? const Color(0x9EFFFFFF)   // rgba(255,255,255,0.62)
-        : const Color(0xFF64748B);
-    final dateIcon   = isDark
-        ? const Color(0x80FFFFFF)   // rgba(255,255,255,0.50)
-        : const Color(0xFF94A3B8);
-    final pathColor  = isDark
-        ? const Color(0x6BFFFFFF)   // rgba(255,255,255,0.42)
-        : const Color(0xFF94A3B8);
+    final titleColor = P.text(isDark);
+    final dateColor  = P.textMore(isDark);
+    final dateIcon   = P.textMore(isDark);
+    final pathColor  = P.textFaint(isDark);
 
     return Container(
       decoration: BoxDecoration(
@@ -397,17 +408,17 @@ class _MetadataPanel extends StatelessWidget {
           FilledButton.icon(
             onPressed: findingSimilar ? null : onFindSimilar,
             icon: findingSimilar
-                ? const SizedBox(
+                ? SizedBox(
                     width: 14,
                     height: 14,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
+                        strokeWidth: 2, color: P.onAccent(isDark)),
                   )
                 : const Icon(Icons.image_search, size: 16),
             label: Text(findingSimilar ? 'Searching…' : 'Find Similar'),
             style: FilledButton.styleFrom(
               backgroundColor: blue,
-              foregroundColor: Colors.white,
+              foregroundColor: P.onAccent(isDark),
               padding: const EdgeInsets.symmetric(
                   horizontal: 14, vertical: 10),
               shape: const StadiumBorder(),

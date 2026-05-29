@@ -130,6 +130,8 @@ class OnnxEmbeddingService {
   String get imageEp => 'cpu';
   String get textEp => 'cpu';
 
+  double byteFallbackRatio(String text) => 0.0;
+
   void initRuntime({SiglipModelVersion modelVersion = SiglipModelVersion.siglip2}) {
     throw UnsupportedError('OnnxEmbeddingService not supported on web');
   }

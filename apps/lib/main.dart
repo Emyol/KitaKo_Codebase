@@ -10,6 +10,7 @@ import 'src/ui/screens/startup_screen.dart';
 import 'src/ui/screens/eula_screen.dart';
 import 'src/ui/screens/permission_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
+import 'src/ui/theme/palette.dart';
 import 'src/services/face_service.dart';
 import 'src/services/image_search_service.dart';
 import 'src/services/model_download_service.dart';
@@ -179,33 +180,34 @@ class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
           darkTheme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.dark,
-            scaffoldBackgroundColor: const Color(0xFF0E1116),
-            colorScheme: const ColorScheme.dark(
-              primary: Color(0xFF3B82F6),
-              secondary: Color(0xFF60A5FA),
-              surface: Color(0xFF161B22),
+            scaffoldBackgroundColor: P.bg(true),
+            colorScheme: ColorScheme.dark(
+              primary: P.accent(true),
+              secondary: P.title(true),
+              surface: P.surface(true),
+              onSurface: P.text(true),
             ),
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFF0E1116),
+            appBarTheme: AppBarTheme(
+              backgroundColor: P.bg(true),
               elevation: 0,
               centerTitle: false,
-              iconTheme: IconThemeData(color: Color(0xFF60A5FA)),
+              iconTheme: IconThemeData(color: P.title(true)),
               titleTextStyle: TextStyle(
-                color: Color(0xFF60A5FA),
+                color: P.title(true),
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
               ),
             ),
-            dividerColor: const Color(0x1F60A5FA),
+            dividerColor: P.hairline(true),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
-              fillColor: const Color(0xFF161B22),
+              fillColor: P.surface(true),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
               ),
-              hintStyle: const TextStyle(
-                color: Color(0x8CFFFFFF),
+              hintStyle: TextStyle(
+                color: P.textMore(true),
                 fontSize: 16,
               ),
             ),
@@ -214,33 +216,34 @@ class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
           theme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.light,
-            scaffoldBackgroundColor: const Color(0xFFF4F7FB),
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF2563EB),
-              secondary: Color(0xFF3B82F6),
-              surface: Color(0xFFFFFFFF),
+            scaffoldBackgroundColor: P.bg(false),
+            colorScheme: ColorScheme.light(
+              primary: P.accent(false),
+              secondary: P.accent(true),
+              surface: P.surface(false),
+              onSurface: P.text(false),
             ),
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFFF4F7FB),
+            appBarTheme: AppBarTheme(
+              backgroundColor: P.bg(false),
               elevation: 0,
               centerTitle: false,
-              iconTheme: IconThemeData(color: Color(0xFF0B2545)),
+              iconTheme: IconThemeData(color: P.title(false)),
               titleTextStyle: TextStyle(
-                color: Color(0xFF0B2545),
+                color: P.title(false),
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
               ),
             ),
-            dividerColor: const Color(0x192563EB),
+            dividerColor: P.hairline(false),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
-              fillColor: Colors.white,
+              fillColor: P.surface(false),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                borderSide: BorderSide(color: P.border(false)),
               ),
-              hintStyle: const TextStyle(
-                color: Color(0xFF64748B),
+              hintStyle: TextStyle(
+                color: P.textMore(false),
                 fontSize: 16,
               ),
             ),

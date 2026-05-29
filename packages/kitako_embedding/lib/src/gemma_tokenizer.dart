@@ -301,6 +301,23 @@ class GemmaTokenizer {
     return result;
   }
 
+  /// Returns the fraction of raw tokens (before BPE merges) that required
+  /// byte-fallback encoding — i.e. characters not in the learned vocabulary.
+  ///
+  /// A high ratio (e.g. > 0.7) indicates the input is mostly gibberish that
+  /// the model has never seen during training and will embed as noise.
+  double byteFallbackRatio(String text) {
+    if (!_isLoaded || text.trim().isEmpty) return 0.0;
+    final normalized = text.replaceAll(' ', '▁');
+    final symbols = normalized.split('');
+    if (symbols.isEmpty) return 0.0;
+    int fallbackCount = 0;
+    for (final symbol in symbols) {
+      if (!_vocab.containsKey(symbol)) fallbackCount++;
+    }
+    return fallbackCount / symbols.length;
+  }
+
   /// Gets the vocabulary size.
   int get vocabSize => _vocab.length;
 

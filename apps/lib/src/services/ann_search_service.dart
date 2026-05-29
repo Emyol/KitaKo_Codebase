@@ -30,7 +30,7 @@ import '../models/search_models.dart';
 /// final results = await annService.searchSimilarWithScores(query, k: 20);
 /// ```
 class ANNSearchService {
-  // ── Active ANN indices ───────────────────────────────────────────────────
+  // -- Active ANN indices ---------------------------------------------------
 
   ann.HnswAnnIndex? _hnswIndex;
   ann.IvfPqAnnIndex? _ivfpqIndex;
@@ -38,7 +38,7 @@ class ANNSearchService {
   /// Which algorithm is active (null = brute-force only).
   ann.AnnAlgorithm? _activeAlgorithm;
 
-  // ── State ────────────────────────────────────────────────────────────────
+  // -- State ----------------------------------------------------------------
 
   bool _isInitialized = false;
 
@@ -52,7 +52,7 @@ class ANNSearchService {
   final List<Float32List> _pendingEmbeddings = [];
   final List<ImageItem> _pendingImages = [];
 
-  // ── Embeddings store (brute-force + cache persistence) ───────────────────
+  // -- Embeddings store (brute-force + cache persistence) -------------------
 
   /// imageId → embedding (used for brute-force and ANN index rebuild).
   final Map<String, Float32List> _imageEmbeddings = {};
@@ -60,13 +60,13 @@ class ANNSearchService {
   /// imageId → ImageItem metadata.
   final Map<String, ImageItem> _imageMetadata = {};
 
-  // ── ID mapping (int IDs for the ANN index ↔ string image IDs) ───────────
+  // -- ID mapping (int IDs for the ANN index ↔ string image IDs) -----------
 
   final Map<int, String> _indexIdToImageId = {};
   final Map<String, int> _imageIdToIndexId = {};
   int _nextIndexId = 0;
 
-  // ── User preference ──────────────────────────────────────────────────────
+  // -- User preference ------------------------------------------------------
 
   /// Override the auto-selected algorithm.
   ///
@@ -155,7 +155,7 @@ class ANNSearchService {
     }
   }
 
-  // ── Configuration ────────────────────────────────────────────────────────
+  // -- Configuration --------------------------------------------------------
 
   /// Default number of results to return.
   static const int defaultTopK = 20;
@@ -212,7 +212,7 @@ class ANNSearchService {
   /// [_ivfpqConfigFor] unless overridden by the alpha-test retrain flow.
   ann.IvfPqConfig? _activeIvfpqConfig;
 
-  // ── Alpha-test tuning surface ────────────────────────────────────────────
+  // -- Alpha-test tuning surface --------------------------------------------
 
   /// Adjust HNSW's runtime accuracy/speed knob. No-op if HNSW isn't loaded.
   /// Higher ef → more accurate but slower per query.
@@ -283,7 +283,7 @@ class ANNSearchService {
     }
   }
 
-  // ── Public getters ───────────────────────────────────────────────────────
+  // -- Public getters -------------------------------------------------------
 
   /// True when the service has embeddings to search over.
   ///
@@ -310,7 +310,7 @@ class ANNSearchService {
   Map<String, ImageItem> get imageMetadata =>
       Map.unmodifiable(_imageMetadata);
 
-  // ── Initialization ───────────────────────────────────────────────────────
+  // -- Initialization -------------------------------------------------------
 
   /// Initialize the service.
   ///
@@ -319,7 +319,7 @@ class ANNSearchService {
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
-    // ── 1. Try HNSW ──
+    // -- 1. Try HNSW --
     try {
       final hnswIndex = ann.HnswAnnIndex(config: _hnswConfig);
       await hnswIndex.initialize();
@@ -335,7 +335,7 @@ class ANNSearchService {
       );
     }
 
-    // ── 2. Try IVF-PQ ──
+    // -- 2. Try IVF-PQ --
     try {
       // Index is created lazily in _trainAndBuildIvfpq() with adaptive config.
       _activeAlgorithm = ann.AnnAlgorithm.ivfpq;
@@ -351,14 +351,14 @@ class ANNSearchService {
       );
     }
 
-    // ── 3. Brute-force only ──
+    // -- 3. Brute-force only --
     _activeAlgorithm = null;
     _isInitialized = true;
     debugPrint('ANNSearchService: Initialized (brute-force search only)');
     return true;
   }
 
-  // ── Indexing ─────────────────────────────────────────────────────────────
+  // -- Indexing -------------------------------------------------------------
 
   /// Index a single image with its embedding.
   Future<void> indexImage(ImageItem image, List<double> embedding) async {
@@ -467,7 +467,7 @@ class ANNSearchService {
     // when enough data arrives via indexBatch.
   }
 
-  // ── Search ───────────────────────────────────────────────────────────────
+  // -- Search ---------------------------------------------------------------
 
   /// Search for similar images, returning results with similarity scores.
   ///
@@ -554,7 +554,7 @@ class ANNSearchService {
     return results.map((r) => r.image).toList();
   }
 
-  // ── Index management ─────────────────────────────────────────────────────
+  // -- Index management -----------------------------------------------------
 
   bool isIndexed(String imageId) => _imageMetadata.containsKey(imageId);
 
@@ -621,7 +621,7 @@ class ANNSearchService {
     debugPrint('ANNSearchService: Disposed');
   }
 
-  // ── Alpha-testing support ────────────────────────────────────────────────
+  // -- Alpha-testing support ------------------------------------------------
 
   /// Measures ANN accuracy relative to brute-force ground truth (recall@k).
   Future<Map<String, dynamic>> testAccuracy(
@@ -662,7 +662,7 @@ class ANNSearchService {
     };
   }
 
-  // ── Private helpers ──────────────────────────────────────────────────────
+  // -- Private helpers ------------------------------------------------------
 
   void _assertInitialized() {
     if (!_isInitialized) {
@@ -790,7 +790,7 @@ class ANNSearchService {
     }
   }
 
-  // ── Search implementations ───────────────────────────────────────────────
+  // -- Search implementations -----------------------------------------------
 
   Future<List<SearchResultWithScore>> _hnswSearchWithScores(
     Float32List query,

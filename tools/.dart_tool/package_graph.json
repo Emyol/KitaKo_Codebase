@@ -26,6 +26,7 @@
       "dependencies": [
         "flutter",
         "image",
+        "kitako_core",
         "onnxruntime_v2",
         "path_provider",
         "tflite_flutter"
@@ -53,6 +54,13 @@
       ]
     },
     {
+      "name": "kitako_core",
+      "version": "0.0.1",
+      "dependencies": [
+        "flutter"
+      ]
+    },
+    {
       "name": "image",
       "version": "4.7.2",
       "dependencies": [
@@ -71,6 +79,14 @@
         "path_provider_linux",
         "path_provider_platform_interface",
         "path_provider_windows"
+      ]
+    },
+    {
+      "name": "onnxruntime_v2",
+      "version": "1.23.2+2",
+      "dependencies": [
+        "ffi",
+        "flutter"
       ]
     },
     {
@@ -419,14 +435,6 @@
       "dependencies": [
         "meta",
         "path"
-      ]
-    },
-    {
-      "name": "onnxruntime_v2",
-      "version": "1.23.2+2",
-      "dependencies": [
-        "ffi",
-        "flutter"
       ]
     }
   ],
