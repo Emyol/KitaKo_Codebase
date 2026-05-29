@@ -32,21 +32,18 @@ Other remote branches for reference:
     aligned to HuggingFace `tokenizer.json` (no lowercasing, no leading ▁, right-pad)
   - `ImagePreprocessor` — added `preprocessRgbaAsync` / `preprocessRgbaInIsolate`
     for pre-decoded RGBA input (avoids re-decoding JPEG in isolate)
-  - Face sub-package: `face_pipeline.dart`, `onnx_face_detector.dart` (SCRFD-2.5G),
-    `onnx_face_embedder.dart` (ArcFace MobileFaceNet), `face_aligner.dart` (Umeyama),
-    `face_dbscan.dart` (DBSCAN clustering)
 
-- **`packages/kitako_core/`** — added face types
-  - `face_constants.dart` — `kFaceEmbeddingDim=512`, `kFaceInputSize=112`,
-    `kFaceDetectorInputSize=640`, `kFaceClusteringThreshold=0.45`, reference landmarks
-  - `face_errors.dart`, `models/face_detection.dart` — Face/Person data models
+> **Removed (2026-05-29):** the face-recognition pipeline was deleted. The
+> `packages/kitako_embedding/lib/src/face/` sub-package (`face_pipeline.dart`,
+> `onnx_face_detector.dart`, `onnx_face_embedder.dart`, `face_aligner.dart`,
+> `face_dbscan.dart`) and the `kitako_core` face types (`face_constants.dart`,
+> `face_errors.dart`, `models/face_detection.dart`) no longer exist, and their
+> exports were stripped from `kitako_embedding.dart` / `kitako_core.dart`.
 
 ### App services (`apps/lib/src/services/`)
 - **`image_search_service.dart`** — central orchestrator: batch embedding (size 5),
   per-batch individual fallback on failure, partial-failure pause + retry/skip UI,
-  lazy image loading (no eager thumbnail bytes), face indexing (user-initiated only)
-- **`face_service.dart`** — wraps face pipeline; `tryAutoInitialize()` loads models
-  silently; `startFaceIndexing()` is user-triggered from PeopleScreen
+  lazy image loading (no eager thumbnail bytes)
 - **`image_loader_service.dart`** — added `loadResizedForEmbedding()`:
   decodes JPEG via `dart:ui.instantiateImageCodec(bytes, targetWidth:512, targetHeight:512)`
   (DCT scaling, avoids full-res 48 MB buffer); returns raw RGBA bytes
@@ -65,13 +62,16 @@ Other remote branches for reference:
 - **`search_screen.dart`** — full text/image search UI
 - **`results_screen.dart`** — search results grid with rank + score badges
 - **`details_screen.dart`** — full image viewer with Find Similar
-- **`people_screen.dart`** — face recognition gallery; "Find Faces" button triggers
-  indexing manually (not on startup)
-- **`person_detail_screen.dart`** — per-person photo grid + label + search-by-person
-- **`alpha_test_screen.dart`** — developer test harness for embedding + search
 - **`startup_screen.dart`** — indexing progress UI; shows amber retry/skip prompt
   on partial embedding failure (`IndexingPhase.embeddingPartialFailure`)
 - **`settings_screen.dart`** — expanded settings including model info
+
+> **Removed (2026-05-29):** `people_screen.dart`, `person_detail_screen.dart`
+> (face-recognition UI) and `alpha_test_screen.dart` (developer embedding/search
+> test harness) were deleted along with the rest of the face + alpha-test
+> pipeline. The alpha-test-only `ImageSearchService` methods
+> (`setForceBruteForce`, `annIndexStatus`, `setHnswEfSearch`, `retrainIvfpq`,
+> `annSearchService` getter) and all `FaceService` wiring were removed too.
 
 ### Thumbnail rendering rule (important)
 All gallery/results grids use:
@@ -119,8 +119,6 @@ If LFS is not installed: `git lfs install` first, then `git lfs pull`.
 | `apps/assets/models/kitako_image_encoder_fp32.onnx` | Image encoder (app asset) | ~190 MB |
 | `apps/assets/models/kitako_text_encoder_int8.onnx` | Text encoder INT8 (app asset) | ~23 MB |
 | `apps/assets/models/tokenizer/tokenizer.json` | GemmaTokenizer vocab | ~10 MB |
-| `apps/assets/models/face/face_detector.onnx` | SCRFD-2.5G face detector | ~2.5 MB |
-| `apps/assets/models/face/face_embedder.onnx` | ArcFace MobileFaceNet | ~13 MB |
 | `models/kitako_image_encoder_fp32.onnx` | FP32 image encoder (desktop/tools) | ~380 MB |
 | `models/kitako_text_encoder_fp32.onnx` | FP32 text encoder (desktop/tools) | ~90 MB |
 | `models/kitako_text_encoder_int8.onnx` | INT8 text encoder (desktop/tools) | ~23 MB |
@@ -153,22 +151,35 @@ changes are pushed:
 
 | File | Change |
 |------|--------|
-| `apps/lib/main.dart` | Removed `startFaceIndexing()` auto-call; face indexing is now user-initiated |
-| `apps/lib/src/services/image_search_service.dart` | Batch size=5, per-batch fallback, pause/retry on failure, `loadResizedForEmbedding` pipeline, lazy loading |
+| `apps/lib/main.dart` | Removed all `FaceService` wiring (field, deferred `tryAutoInitialize`, dispose) |
+| `apps/lib/src/services/image_search_service.dart` | Batch size=5, per-batch fallback, pause/retry on failure, `loadResizedForEmbedding` pipeline, lazy loading; face + alpha-test methods removed |
 | `apps/lib/src/services/embedding_service.dart` | Added `generateImageEmbeddingFromRgba` |
 | `apps/lib/src/services/embedding_service_stub.dart` | Added `embedImageFromRgba` web stub |
 | `apps/lib/src/services/image_loader_service.dart` | Added `loadResizedForEmbedding` (512×512 DCT pre-shrink via `dart:ui`) |
 | `apps/lib/src/ui/screens/startup_screen.dart` | Amber retry/skip UI for `embeddingPartialFailure` phase |
 | `apps/lib/src/ui/screens/home_screen.dart` | `Image.file(cacheWidth:256)` everywhere, no `cacheHeight` |
-| `apps/lib/src/ui/screens/people_screen.dart` | `_indexingRequested` flag, "Find Faces" button, "No People Found" state |
-| `apps/lib/src/ui/screens/person_detail_screen.dart` | `Image.file` for photo grid (no `cacheHeight`) |
 | `apps/lib/src/ui/screens/results_screen.dart` | `Image.file` (no `cacheHeight`); all `withOpacity` → `withValues(alpha:)` |
 | `apps/lib/src/ui/screens/search_screen.dart` | `Image.file` (no `cacheHeight`) in both thumbnail helpers |
-| `apps/lib/src/ui/screens/alpha_test_screen.dart` | `Image.file` (no `cacheHeight`) in list tile |
 | `packages/kitako_embedding/lib/src/image_preprocessor.dart` | Added `preprocessRgbaAsync` / `_preprocessRgbaInIsolate` |
 | `packages/kitako_embedding/lib/src/onnx_embedding_service.dart` | Added `embedImageFromRgba` |
 | `packages/kitako_embedding/pubspec.yaml` | Dependency updates |
 | `models/kitako_text_encoder_int8.onnx` | Updated INT8 model (LFS pointer updated) |
+
+### Face + alpha-test removal (2026-05-29)
+Deleted files:
+- `apps/assets/models/face/` (`face_detector.onnx`, `face_embedder.onnx`)
+- `apps/lib/src/services/face_service.dart`
+- `apps/lib/src/ui/screens/people_screen.dart`, `person_detail_screen.dart`, `alpha_test_screen.dart`
+- `packages/kitako_embedding/lib/src/face/` (whole sub-package)
+- `packages/kitako_core/lib/src/{face_constants.dart,face_errors.dart,models/face_detection.dart}`
+
+Edited files:
+- `kitako_embedding.dart` / `kitako_core.dart` — face exports removed
+- `apps/pubspec.yaml` — `assets/models/face/` asset entry removed
+
+Kept intentionally: `setPreferredAlgorithm` / `preferHnsw` (used by Settings),
+the `imageLoader` getter (used by search/details), and the underlying
+`ANNSearchService.setHnswEfSearch` / `retrainIvfpq` library methods.
 
 **Action for a new Claude:** run `git status` immediately. If these files show as
 modified, the changes were committed and you're up to date. If git status is
@@ -210,10 +221,9 @@ adb shell ls -lh /data/local/tmp/*.onnx
 ```
 
 ### Check model presence in app
-Open the app → Settings → scroll to "Model Info". All four models
-(image encoder, text encoder, face detector, face embedder) should show
-status "Ready". If any show "Missing", the app will still run but that
-feature is disabled.
+Open the app → Settings → scroll to "Model Info". Both models
+(image encoder, text encoder) should show status "Ready". If either shows
+"Missing", the app will still run but search is disabled.
 
 ---
 
@@ -225,10 +235,11 @@ feature is disabled.
 3. **Mock embeddings must not fall back silently** — `EmbeddingService` throws
    when ONNX backend is expected but not ready. Silent mock fallback produces
    garbage vectors that make search appear to work but return meaningless results.
-4. **Face indexing is user-initiated** — `startFaceIndexing()` is only called
-   from `PeopleScreen._startFaceIndexing()`. Do not add auto-calls in `main.dart`
-   or `initState`; loading face ONNX sessions concurrently with the embedding
-   loop causes OOM (both use ~48 MB decode buffers + multi-hundred MB models).
+4. **Face recognition is removed** — the face pipeline, models, and UI were
+   deleted (see Section 4, 2026-05-29). Do not reintroduce `FaceService`,
+   `PeopleScreen`, or the `apps/assets/models/face/` assets without revisiting
+   the OOM constraints that originally gated it (face ONNX sessions loaded
+   concurrently with the embedding loop exhausted memory on mid-range devices).
 5. **Tokenizer pipeline** — see Section 2. Any change to tokenization must be
    validated against the Python reference in `external_test/query.py`.
 6. **ONNX output tensor names** — `image_embeds` / `text_embeds`. If you export
