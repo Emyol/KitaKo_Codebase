@@ -22,7 +22,7 @@ class ImageLoaderService {
   // Full device gallery  →  static const String? _kTestAlbum = null;
   // personal_1k dataset  →  static const String? _kTestAlbum = 'personal_1k';
   // --------------------------------------------------------------------------
-  static const String? _kTestAlbum = null;
+  static const String? _kTestAlbum = 'personal_1k';
 
   /// Album the in-app camera writes new captures into.
   ///
