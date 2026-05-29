@@ -18,6 +18,27 @@ KitaKo enables **natural language image search** with support for **Taglish** (T
 
 ---
 
+## Get KitaKo
+
+Scan with your phone's camera:
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/images/kitako-download-qr.png" alt="Download KitaKo APK" width="180" /><br/>
+      <strong>Download the app</strong><br/>
+      <sub>KitaKo v1.0.0 · Android APK</sub>
+    </td>
+    <td align="center">
+      <img src="docs/images/kitako-project-qr.png" alt="KitaKo project repository" width="180" /><br/>
+      <strong>Project repository</strong><br/>
+      <sub>Source code on GitHub</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Repository Structure
 
 ```
