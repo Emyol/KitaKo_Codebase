@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../theme/palette.dart';
 class EulaScreen extends StatefulWidget {
   final VoidCallback onAccepted;
 
@@ -26,26 +27,26 @@ class _EulaScreenState extends State<EulaScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bg       = isDark ? const Color(0xFF0E1116) : const Color(0xFFF4F7FB);
+    final bg       = P.bg(isDark);
     final bgDeep   = isDark ? const Color(0xFF070A0E) : const Color(0xFFE8EEF6);
-    final surface  = isDark ? const Color(0xFF161B22) : Colors.white;
+    final surface  = P.surface(isDark);
     final surfaceAlt = isDark ? const Color(0xFF1A2030) : const Color(0xFFEEF3FA);
     final surfaceHigh = isDark ? const Color(0xFF222A36) : const Color(0xFFE2EAF4);
-    final border   = isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0);
+    final border   = P.border(isDark);
     final hairline = isDark ? const Color(0x1F60A5FA) : const Color(0x192563EB);
     final blue     = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
     final blueSoft = isDark ? const Color(0x2E3B82F6) : const Color(0xFFDBEAFE);
     final blueGlow = isDark ? const Color(0x593B82F6) : const Color(0x2E2563EB);
-    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    final textColor = P.text(isDark);
     final textDim  = isDark ? const Color(0xC7FFFFFF) : const Color(0xFF475569);
-    final textMore = isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B);
-    final textFaint = isDark ? const Color(0x61FFFFFF) : const Color(0xFF94A3B8);
+    final textMore = P.textMore(isDark);
+    final textFaint = P.textFaint(isDark);
 
     return Scaffold(
       backgroundColor: bgDeep,
       body: Column(
         children: [
-          // ── Top brand band ───────────────────────────────────────────────────
+          // -- Top brand band ---------------------------------------------------
           Container(
             color: bg,
             child: SafeArea(
@@ -91,7 +92,7 @@ class _EulaScreenState extends State<EulaScreen> {
             ),
           ),
 
-          // ── Read-carefully callout ────────────────────────────────────────────
+          // -- Read-carefully callout --------------------------------------------
           Container(
             color: bg,
             padding: const EdgeInsets.fromLTRB(22, 14, 22, 14),
@@ -137,7 +138,7 @@ class _EulaScreenState extends State<EulaScreen> {
           ),
           Container(height: 1, color: hairline),
 
-          // ── Scrollable body ──────────────────────────────────────────────────
+          // -- Scrollable body --------------------------------------------------
           Expanded(
             child: ColoredBox(
               color: bgDeep,
@@ -501,7 +502,7 @@ class _EulaScreenState extends State<EulaScreen> {
             ),
           ),
 
-          // ── Sticky footer ────────────────────────────────────────────────────
+          // -- Sticky footer ----------------------------------------------------
           Container(
             color: bg,
             child: SafeArea(
@@ -528,8 +529,8 @@ class _EulaScreenState extends State<EulaScreen> {
                               ),
                             ),
                             child: _checked
-                                ? const Icon(Icons.check,
-                                    size: 14, color: Colors.white)
+                                ? Icon(Icons.check,
+                                    size: 14, color: P.onAccent(isDark))
                                 : null,
                           ),
                           const SizedBox(width: 10),
@@ -572,7 +573,7 @@ class _EulaScreenState extends State<EulaScreen> {
                             backgroundColor:
                                 _checked ? blue : surfaceHigh,
                             disabledBackgroundColor: surfaceHigh,
-                            foregroundColor: Colors.white,
+                            foregroundColor: P.onAccent(isDark),
                             disabledForegroundColor: textFaint,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
@@ -591,7 +592,7 @@ class _EulaScreenState extends State<EulaScreen> {
                               Icon(
                                 Icons.north_east,
                                 size: 16,
-                                color: _checked ? Colors.white : textFaint,
+                                color: _checked ? P.onAccent(isDark) : textFaint,
                               ),
                             ],
                           ),
@@ -619,7 +620,7 @@ class _EulaScreenState extends State<EulaScreen> {
   }
 }
 
-// ── Section wrapper ────────────────────────────────────────────────────────────
+// -- Section wrapper ------------------------------------------------------------
 
 class _EulaSectionWidget extends StatelessWidget {
   final String n;
@@ -678,7 +679,7 @@ class _EulaSectionWidget extends StatelessWidget {
   }
 }
 
-// ── Helper widget builders ─────────────────────────────────────────────────────
+// -- Helper widget builders -----------------------------------------------------
 
 Widget _para(String text, Color color) {
   return Padding(

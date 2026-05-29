@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../theme/palette.dart';
 /// Shown once on first launch, before the EULA.
 /// Requests photo library and camera access, then calls [onComplete]
 /// regardless of whether the user grants or denies.
@@ -38,24 +39,24 @@ class _PermissionScreenState extends State<PermissionScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bg      = isDark ? const Color(0xFF0E1116) : const Color(0xFFF4F7FB);
+    final bg      = P.bg(isDark);
     final bgDeep  = isDark ? const Color(0xFF070A0E) : const Color(0xFFE8EEF6);
-    final surface = isDark ? const Color(0xFF161B22) : Colors.white;
-    final border  = isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0);
+    final surface = P.surface(isDark);
+    final border  = P.border(isDark);
     final hairline= isDark ? const Color(0x1F60A5FA) : const Color(0x192563EB);
     final blue    = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
     final blueSoft= isDark ? const Color(0x2E3B82F6) : const Color(0xFFDBEAFE);
     final blueGlow= isDark ? const Color(0x593B82F6) : const Color(0x2E2563EB);
-    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    final textColor = P.text(isDark);
     final textDim = isDark ? const Color(0xC7FFFFFF) : const Color(0xFF475569);
-    final textMore= isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B);
-    final textFaint=isDark ? const Color(0x61FFFFFF) : const Color(0xFF94A3B8);
+    final textMore= P.textMore(isDark);
+    final textFaint=P.textFaint(isDark);
 
     return Scaffold(
       backgroundColor: bgDeep,
       body: Column(
         children: [
-          // ── Top brand band ──────────────────────────────────────────────────
+          // -- Top brand band --------------------------------------------------
           Container(
             color: bg,
             child: SafeArea(
@@ -100,7 +101,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
             ),
           ),
 
-          // ── Body ────────────────────────────────────────────────────────────
+          // -- Body ------------------------------------------------------------
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
@@ -185,7 +186,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
             ),
           ),
 
-          // ── Footer ──────────────────────────────────────────────────────────
+          // -- Footer ----------------------------------------------------------
           Container(
             color: bg,
             child: SafeArea(
@@ -224,12 +225,12 @@ class _PermissionScreenState extends State<PermissionScreen> {
                             ),
                           ),
                           child: _requesting
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: P.onAccent(isDark),
                                   ),
                                 )
                               : Row(
@@ -265,7 +266,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
   }
 }
 
-// ── Permission card ────────────────────────────────────────────────────────────
+// -- Permission card ------------------------------------------------------------
 
 class _PermissionCard extends StatelessWidget {
   final IconData icon;

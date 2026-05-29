@@ -1,18 +1,19 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'details_screen.dart';
+import 'results_screen.dart';
 import '../theme/theme_notifier.dart';
 import '../../services/image_search_service.dart';
 import '../../services/search_history_service.dart';
 import '../../state/settings_controller.dart';
 import '../../models/search_models.dart';
 
+import '../theme/palette.dart';
 class HomeScreen extends StatefulWidget {
   final ThemeNotifier themeNotifier;
   final ImageSearchService searchService;
@@ -32,16 +33,15 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<ImageItem> _images = [];
   StreamSubscription<List<ImageItem>>? _imagesSubscription;
-  StreamSubscription<SearchState>? _searchSubscription;
   StreamSubscription<IndexingProgress>? _indexingSubscription;
   DateTime? _lastBackPressed;
-  SearchState _searchState = const SearchState();
   IndexingProgress _indexingProgress =
       const IndexingProgress(phase: IndexingPhase.idle, message: '');
   bool _isLoading = true;
+  bool _findingSimilar = false;
   final SearchHistoryService _historyService = SearchHistoryService();
 
-  // ── Gallery column count (pinch-adjustable, persisted) ─────────────────────
+  // -- Gallery column count (pinch-adjustable, persisted) ---------------------
   int _columnCount = 3;
   int _columnCountAtGestureStart = 3;
   // Raw pointer tracking — bypasses gesture arena so pinch works on scrollables
@@ -70,7 +70,6 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadImages();
     _listenForImageUpdates();
-    _listenForSearchState();
     _listenForIndexingProgress();
     _loadColumnCount();
     _historyService.load().then((_) {
@@ -81,7 +80,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _imagesSubscription?.cancel();
-    _searchSubscription?.cancel();
     _indexingSubscription?.cancel();
     super.dispose();
   }
@@ -103,13 +101,6 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
         });
       }
-    });
-  }
-
-  void _listenForSearchState() {
-    _searchState = widget.searchService.currentState;
-    _searchSubscription = widget.searchService.searchStateStream.listen((state) {
-      if (mounted) setState(() => _searchState = state);
     });
   }
 
@@ -184,9 +175,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _findSimilar(ImageItem image) async {
-    // Results appear directly on HomeScreen via the searchStateStream listener
+    if (_findingSimilar) return;
+    setState(() => _findingSimilar = true);
     try {
       await widget.searchService.searchByImageId(image.id);
+      if (!mounted) return;
+      final state = widget.searchService.currentState;
+      final result = state.result;
+      if (result == null) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ResultsScreen(
+            searchResult: result,
+            searchService: widget.searchService,
+            queryImage: state.queryImage,
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -196,6 +201,8 @@ class _HomeScreenState extends State<HomeScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
+    } finally {
+      if (mounted) setState(() => _findingSimilar = false);
     }
   }
 
@@ -215,7 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Text(
               image.name,
               style: TextStyle(
-                color: isDark ? Colors.white38 : Colors.black38,
+                color: P.textFaint(isDark),
                 fontSize: 10,
               ),
               maxLines: 1,
@@ -228,36 +235,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Builds the main content area: searching spinner, results grid, or gallery.
+  /// Builds the main content area: gallery (or skeleton on first load).
+  ///
+  /// Find-similar results are no longer rendered inline here — they push a
+  /// fresh [ResultsScreen] route so text-search and image-similarity share
+  /// one results surface.
   Widget _buildContent(bool isDark) {
-    final status = _searchState.status;
-
-    // â”€â”€ Searching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (status == SearchStatus.searching) {
+    if (_findingSimilar) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (_searchState.queryImage != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.memory(
-                  _searchState.queryImage!,
-                  width: 72,
-                  height: 72,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
             const CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
             ),
             const SizedBox(height: 12),
             Text(
-              'Finding similar imagesâ€¦',
+              'Finding similar images…',
               style: TextStyle(
-                color: isDark ? Colors.white54 : Colors.black54,
+                color: P.textMore(isDark),
                 fontSize: 14,
               ),
             ),
@@ -266,237 +262,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // â”€â”€ Results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (status == SearchStatus.success) {
-      final results = _searchState.result?.images ?? [];
-      final scores = _searchState.result?.scores;
-      final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
-      final blueSoft = isDark ? const Color(0x2E3B82F6) : const Color(0xFFDBEAFE);
 
-      return Column(
-        children: [
-          // Header: elevated card banner
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF161B22) : Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isDark
-                      ? const Color(0xFF1F2733)
-                      : const Color(0xFFE2E8F0),
-                ),
-                boxShadow: isDark
-                    ? null
-                    : [
-                        BoxShadow(
-                          color: const Color(0xFF0F2A4A).withValues(alpha: 0.06),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-              ),
-              child: Row(
-                children: [
-                  if (_searchState.queryImage != null) ...[
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: blueSoft,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.memory(
-                          _searchState.queryImage!,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                  ],
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Similar to',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.6,
-                            color: blue,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${results.length} match${results.length == 1 ? '' : 'es'} · ranked by similarity',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.55)
-                                : const Color(0xFF64748B),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: widget.searchService.clearSearch,
-                    child: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF1A2030)
-                            : const Color(0xFFEEF3FA),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.close,
-                        size: 16,
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.55)
-                            : const Color(0xFF64748B),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // Results grid
-          Expanded(
-            child: results.isEmpty
-                ? Center(
-                    child: Text(
-                      'No similar images found',
-                      style: TextStyle(
-                        color: isDark ? Colors.white38 : Colors.black38,
-                        fontSize: 14,
-                      ),
-                    ),
-                  )
-                : Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-                    child: GridView.builder(
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 6,
-                            mainAxisSpacing: 6,
-                            childAspectRatio: 1,
-                          ),
-                      itemCount: results.length,
-                      itemBuilder: (context, index) {
-                        final image = results[index];
-                        final score = scores != null && index < scores.length
-                            ? scores[index]
-                            : null;
-                        final isBest = index == 0;
-                        return Material(
-                          color: isDark
-                              ? const Color(0xFF1A2030)
-                              : const Color(0xFFE2EAF4),
-                          borderRadius: BorderRadius.circular(14),
-                          child: InkWell(
-                            onTap: () =>
-                                _openDetails(image, index, imageList: results),
-                            borderRadius: BorderRadius.circular(14),
-                            splashColor:
-                                isDark ? Colors.white12 : Colors.black12,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(14),
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  Image.file(
-                                    File(image.path),
-                                    fit: BoxFit.cover,
-                                    cacheWidth: 256,
-                                    errorBuilder: (_, _, _) =>
-                                        _buildPlaceholder(image, isDark),
-                                  ),
-                                  // Rank / Best match badge
-                                  Positioned(
-                                    top: 6,
-                                    left: 6,
-                                    child: isBest
-                                        ? Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 8, vertical: 3),
-                                            decoration: BoxDecoration(
-                                              color: blue,
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: const [
-                                                Icon(Icons.star_rounded,
-                                                    size: 11,
-                                                    color: Colors.white),
-                                                SizedBox(width: 4),
-                                                Text('Best match',
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 10,
-                                                      fontWeight:
-                                                          FontWeight.w700,
-                                                      letterSpacing: 0.2,
-                                                    )),
-                                              ],
-                                            ),
-                                          )
-                                        : Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 7, vertical: 3),
-                                            decoration: BoxDecoration(
-                                              color: blue,
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                            ),
-                                            child: Text(
-                                              '#${index + 1}',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.w700,
-                                                letterSpacing: 0.2,
-                                              ),
-                                            ),
-                                          ),
-                                  ),
-                                  // Confidence bars
-                                  if (!isBest && score != null)
-                                    Positioned(
-                                      bottom: 6,
-                                      right: 6,
-                                      child: _buildConfidenceBars(
-                                          score, isDark),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-          ),
-        ],
-      );
-    }
-
-    // â”€â”€ Gallery (idle / noResults / error) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (_images.isEmpty) {
       if (_isLoading) {
         // Skeleton grid — shows immediately while first progressive batch loads.
@@ -506,7 +272,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Text(
           'No images found',
           style: TextStyle(
-            color: isDark ? Colors.white70 : Colors.black54,
+            color: P.textDim(isDark),
             fontSize: 16,
           ),
         ),
@@ -587,38 +353,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildConfidenceBars(double score, bool isDark) {
-    final filled = score >= 0.85 ? 3 : score >= 0.70 ? 2 : 1;
-    final barColor =
-        isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F1726).withValues(alpha: 0.78),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          for (int i = 0; i < 3; i++) ...[
-            if (i > 0) const SizedBox(width: 2),
-            Container(
-              width: 3,
-              height: [6.0, 9.0, 12.0][i],
-              decoration: BoxDecoration(
-                color: i < filled
-                    ? barColor
-                    : Colors.white.withValues(alpha: 0.30),
-                borderRadius: BorderRadius.circular(1),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   // Returns [(label, images)] groups sorted newest-first within each group.
   // Sections: Today → This week → This month → Month YYYY (per month) → Earlier
   List<(String, List<ImageItem>)> _groupByDate(List<ImageItem> images) {
@@ -690,9 +424,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSectionHead(String label, int count, bool isDark) {
-    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
-    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final faint = isDark ? const Color(0x61FFFFFF) : const Color(0xFF94A3B8);
+    final blue = P.accent(isDark);
+    final textColor = P.text(isDark);
+    final faint = P.textFaint(isDark);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
       child: Row(
@@ -714,7 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Find index for _openDetails navigation
     final index = _images.indexOf(image);
     return Material(
-      color: isDark ? const Color(0xFF1A2030) : const Color(0xFFE2EAF4),
+      color: P.surfaceAlt(isDark),
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: () => _openDetails(image, index < 0 ? 0 : index),
@@ -826,8 +560,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final titleColor = isDark ? const Color(0xFF60A5FA) : const Color(0xFF0B2545);
-    final hairline = isDark ? const Color(0x1F60A5FA) : const Color(0x192563EB);
+    final titleColor = P.title(isDark);
+    final hairline = P.hairline(isDark);
 
     return PopScope(
       canPop: false,
@@ -865,9 +599,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
               decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0x2E3B82F6)
-                    : const Color(0xFFDBEAFE),
+                color: P.accentSoft(isDark),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
@@ -876,9 +608,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.6,
-                  color: isDark
-                      ? const Color(0xFF93C5FD)
-                      : const Color(0xFF1D4ED8),
+                  color: P.chipText(isDark),
                 ),
               ),
             ),
@@ -924,12 +654,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Container(
                   height: 56,
                   decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF161B22) : Colors.white,
+                    color: P.surface(isDark),
                     borderRadius: BorderRadius.circular(28),
                     border: Border.all(
-                      color: isDark
-                          ? const Color(0xFF1F2733)
-                          : const Color(0xFFE2E8F0),
+                      color: P.border(isDark),
                     ),
                     boxShadow: isDark
                         ? [
@@ -967,13 +695,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         width: 36,
                         height: 36,
                         decoration: BoxDecoration(
-                          color: isDark
-                              ? const Color(0xFF3B82F6)
-                              : const Color(0xFF2563EB),
+                          color: P.accent(isDark),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.search,
-                            color: Colors.white, size: 18),
+                        child: Icon(Icons.search,
+                            color: P.onAccent(isDark), size: 18),
                       ),
                       const SizedBox(width: 10),
                       // Recent query or placeholder
@@ -989,9 +715,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       fontSize: 10,
                                       fontWeight: FontWeight.w600,
                                       letterSpacing: 0.6,
-                                      color: isDark
-                                          ? const Color(0xFF3B82F6)
-                                          : const Color(0xFF2563EB),
+                                      color: P.accent(isDark),
                                     ),
                                   ),
                                   Text(
@@ -999,9 +723,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
-                                      color: isDark
-                                          ? Colors.white
-                                          : const Color(0xFF0F172A),
+                                      color: P.text(isDark),
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -1024,9 +746,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding:
                             const EdgeInsets.fromLTRB(8, 6, 10, 6),
                         decoration: BoxDecoration(
-                          color: isDark
-                              ? const Color(0x243B82F6)
-                              : const Color(0xFFDBEAFE),
+                          color: P.chipBg(isDark),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Row(
@@ -1035,9 +755,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Icon(
                               Icons.image_outlined,
                               size: 14,
-                              color: isDark
-                                  ? const Color(0xFF93C5FD)
-                                  : const Color(0xFF1D4ED8),
+                              color: P.chipText(isDark),
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -1045,9 +763,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: isDark
-                                    ? const Color(0xFF93C5FD)
-                                    : const Color(0xFF1D4ED8),
+                                color: P.chipText(isDark),
                               ),
                             ),
                           ],
@@ -1066,7 +782,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ── Skeleton gallery ───────────────────────────────────────────────────────────
+// -- Skeleton gallery -----------------------------------------------------------
 // Shown immediately on launch while the first progressive image batch loads.
 // One AnimationController drives all tiles so there is no per-tile overhead.
 

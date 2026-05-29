@@ -1,34 +1,34 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'dart:io';
+import 'dart:typed_data';
 import '../../models/search_models.dart';
 import '../../services/image_search_service.dart';
 import 'details_screen.dart';
 
+import '../theme/palette.dart';
 class ResultsScreen extends StatefulWidget {
   final SearchResult searchResult;
   final ImageSearchService searchService;
+  /// Thumbnail of the query image for image-to-image searches. Rendered in the
+  /// header in place of the search-icon badge when non-null.
+  final Uint8List? queryImage;
 
   const ResultsScreen({
     super.key,
     required this.searchResult,
     required this.searchService,
+    this.queryImage,
   });
 
   @override
   State<ResultsScreen> createState() => _ResultsScreenState();
 }
 
-/// Coarse relevance buckets shown to the user instead of a continuous slider.
-///
-/// Each bucket maps to a minimum score as a fraction of the top result's
-/// score. `off` means no relevance filtering at all.
 enum _RelevanceBucket {
   off(0.0, 'Off'),
-  veryLow(0.20, 'Very Low'),
-  low(0.40, 'Low'),
-  average(0.60, 'Average'),
-  high(0.80, 'High'),
-  veryHigh(0.95, 'Very High');
+  low(0.20, 'Low'),
+  medium(0.45, 'Medium'),
+  high(0.70, 'High');
 
   final double threshold;
   final String label;
@@ -36,29 +36,65 @@ enum _RelevanceBucket {
 }
 
 class _ResultsScreenState extends State<ResultsScreen> {
-  // â”€â”€ Filter state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   DateTime? _startDate;
   DateTime? _endDate;
-
-  /// Selected relevance bucket. `off` means no filtering.
   _RelevanceBucket _relevance = _RelevanceBucket.off;
 
-  /// null = show all.
-  int? _maxResults;
-
-  static const _maxResultsOptions = [10, 20, 50, 100];
-
-  // â”€â”€ Derived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Pool used for filtering. Starts as the original result; gets swapped to an
+  // expanded top-N pool the first time a non-Off relevance is applied so the
+  // threshold has more than just the post-combo-filter handful to keep.
+  late SearchResult _activeResult = widget.searchResult;
+  SearchResult? _expandedResult;
+  bool _isExpanding = false;
 
   bool get _hasActiveFilters =>
       _startDate != null ||
       _endDate != null ||
-      _relevance != _RelevanceBucket.off ||
-      _maxResults != null;
+      _relevance != _RelevanceBucket.off;
 
-  /// Returns indices into `widget.searchResult.images` that pass all filters.
+  /// Re-runs the underlying search with [forceTopN] temporarily set, so the
+  /// relevance filter has the full top-N candidate pool to threshold against
+  /// instead of the small post-combo-filter set.
+  Future<void> _ensureExpandedPool() async {
+    if (_expandedResult != null || _isExpanding) return;
+    setState(() => _isExpanding = true);
+    final svc = widget.searchService;
+    final priorForce = svc.forceTopN;
+    svc.forceTopN = svc.topK;
+    try {
+      final originalQuery = widget.searchResult.query;
+      if (widget.queryImage != null) {
+        await svc.searchByImage(widget.queryImage!.toList());
+      } else if (originalQuery.isNotEmpty) {
+        await svc.searchImages(originalQuery);
+      }
+      final fresh = svc.currentState.result;
+      if (fresh != null && mounted) {
+        _expandedResult = fresh;
+        _activeResult = fresh;
+      }
+    } finally {
+      svc.forceTopN = priorForce;
+      if (mounted) setState(() => _isExpanding = false);
+    }
+  }
+
+  void _applyRelevance(_RelevanceBucket r) {
+    setState(() {
+      _relevance = r;
+      _activeResult = (r == _RelevanceBucket.off)
+          ? widget.searchResult
+          : (_expandedResult ?? widget.searchResult);
+    });
+    if (r != _RelevanceBucket.off && _expandedResult == null) {
+      _ensureExpandedPool();
+    }
+  }
+
   List<int> get _filteredIndices {
-    final scores = widget.searchResult.scores;
+    final total = _activeResult.images.length;
+
+    final scores = _activeResult.scores;
     final topScore =
         (scores != null && scores.isNotEmpty) ? scores.first : 1.0;
     final minScore = _relevance != _RelevanceBucket.off
@@ -70,10 +106,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
         : null;
 
     final out = <int>[];
-    for (int i = 0; i < widget.searchResult.images.length; i++) {
-      final img = widget.searchResult.images[i];
+    for (int i = 0; i < total; i++) {
+      final img = _activeResult.images[i];
 
-      // â”€â”€ Date range â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (_startDate != null && img.createdAt != null) {
         if (img.createdAt!.isBefore(_startDate!)) continue;
       }
@@ -81,40 +116,22 @@ class _ResultsScreenState extends State<ResultsScreen> {
         if (img.createdAt!.isAfter(end)) continue;
       }
 
-      // â”€â”€ Relevance threshold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (minScore != null) {
-        final score = widget.searchResult.scoreAt(i) ?? 0.0;
+        final score = _activeResult.scoreAt(i) ?? 0.0;
         if (score < minScore) continue;
       }
 
       out.add(i);
-      if (_maxResults != null && out.length >= _maxResults!) break;
     }
     return out;
   }
 
-  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  String _formatScore(double? score) {
-    if (score == null) return '?';
-    return '${(score * 100).toStringAsFixed(1)}%';
-  }
-
-
-  // â”€â”€ Filter bottom sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _openFilterSheet() {
-    // Local copies so the sheet can mutate without rebuilding the parent until
-    // the user taps Apply.
     var start = _startDate;
     var end = _endDate;
     var relevance = _relevance;
-    int? maxRes = _maxResults;
-
-    final scores = widget.searchResult.scores;
-    final topScore =
-        (scores != null && scores.isNotEmpty) ? scores.first : 1.0;
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -123,18 +140,14 @@ class _ResultsScreenState extends State<ResultsScreen> {
         return StatefulBuilder(
           builder: (ctx, setSheet) {
             final isDark = Theme.of(ctx).brightness == Brightness.dark;
-            final bg = isDark ? const Color(0xFF161B22) : Colors.white;
-            final divColor =
-                isDark ? Colors.white12 : Colors.black12;
+            final bg = P.surface(isDark);
+            final divColor = isDark ? Colors.white12 : Colors.black12;
             final labelStyle = TextStyle(
               fontWeight: FontWeight.w600,
               fontSize: 13,
-              color: isDark ? Colors.white70 : Colors.black87,
+              color: P.textDim(isDark),
             );
-            final subStyle = TextStyle(
-              fontSize: 12,
-              color: isDark ? Colors.white38 : Colors.black45,
-            );
+            final blue = P.accent(isDark);
 
             return Container(
               decoration: BoxDecoration(
@@ -143,20 +156,16 @@ class _ResultsScreenState extends State<ResultsScreen> {
                     const BorderRadius.vertical(top: Radius.circular(20)),
               ),
               padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                top: 16,
+                left: 20, right: 20, top: 16,
                 bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Handle
                   Center(
                     child: Container(
-                      width: 40,
-                      height: 4,
+                      width: 40, height: 4,
                       decoration: BoxDecoration(
                         color: isDark ? Colors.white24 : Colors.black26,
                         borderRadius: BorderRadius.circular(2),
@@ -166,16 +175,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      const Icon(Icons.tune, size: 20,
-                          color: Color(0xFF3B82F6)),
+                      Icon(Icons.tune, size: 20, color: blue),
                       const SizedBox(width: 8),
                       Text('Filter Results',
                           style: TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.bold,
-                              color: isDark
-                                  ? Colors.white
-                                  : Colors.black87)),
+                              color: P.text(isDark))),
                       const Spacer(),
                       TextButton(
                         onPressed: () {
@@ -183,17 +189,16 @@ class _ResultsScreenState extends State<ResultsScreen> {
                             start = null;
                             end = null;
                             relevance = _RelevanceBucket.off;
-                            maxRes = null;
                           });
                         },
-                        child: const Text('Reset',
-                            style: TextStyle(color: Color(0xFF3B82F6))),
+                        child: Text('Reset',
+                            style: TextStyle(color: blue)),
                       ),
                     ],
                   ),
                   Divider(color: divColor),
 
-                  // â”€â”€ Date Range â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                  // -- Date Range --
                   Text('Date Range', style: labelStyle),
                   const SizedBox(height: 8),
                   Row(
@@ -232,8 +237,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
                             );
                             if (d != null) setSheet(() => end = d);
                           },
-                          onClear:
-                              end != null ? () => setSheet(() => end = null) : null,
+                          onClear: end != null
+                              ? () => setSheet(() => end = null)
+                              : null,
                         ),
                       ),
                     ],
@@ -241,143 +247,49 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   const SizedBox(height: 16),
                   Divider(color: divColor),
 
-                  // â”€â”€ Relevance Threshold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                  Row(
-                    children: [
-                      Text('Relevance', style: labelStyle),
-                      const Spacer(),
-                      // Tiny score indicator: still surfaces the underlying %
-                      // so users who care can verify what the bucket means.
-                      Text(
-                        relevance == _RelevanceBucket.off
-                            ? 'Off'
-                            : 'â‰¥ ${(relevance.threshold * 100).round()}% of top',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: relevance == _RelevanceBucket.off
-                              ? (isDark ? Colors.white38 : Colors.black38)
-                              : const Color(0xFF3B82F6),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (relevance != _RelevanceBucket.off) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      'Top score: ${_formatScore(topScore)}  â†’  '
-                      'Min shown: ${_formatScore(topScore * relevance.threshold)}',
-                      style: subStyle,
+                  // -- Relevance --
+                  Text('Relevance', style: labelStyle),
+                  const SizedBox(height: 4),
+                  Text(
+                    relevance == _RelevanceBucket.off
+                        ? 'Show all results regardless of score'
+                        : 'Only show results above ${(relevance.threshold * 100).round()}% match',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.white38 : Colors.black45,
                     ),
-                  ],
+                  ),
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: _RelevanceBucket.values.map((b) {
-                      final selected = relevance == b;
+                    children: _RelevanceBucket.values.map((r) {
+                      final selected = relevance == r;
                       return ChoiceChip(
-                        label: Text(b.label),
+                        label: Text(r.label),
                         selected: selected,
-                        onSelected: (_) => setSheet(() => relevance = b),
-                        selectedColor: const Color(0xFF3B82F6),
+                        onSelected: (_) => setSheet(() => relevance = r),
+                        selectedColor: blue,
                         labelStyle: TextStyle(
                           color: selected
-                              ? Colors.white
-                              : (isDark ? Colors.white70 : Colors.black87),
-                          fontWeight: selected
-                              ? FontWeight.w600
-                              : FontWeight.normal,
+                              ? P.onAccent(isDark)
+                              : (P.textDim(isDark)),
+                          fontWeight:
+                              selected ? FontWeight.w600 : FontWeight.normal,
                           fontSize: 12,
                         ),
                       );
                     }).toList(),
                   ),
-                  const SizedBox(height: 16),
-                  Divider(color: divColor),
-
-                  // â”€â”€ Max Results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                  Text('Display Count', style: labelStyle),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      ..._maxResultsOptions.map((n) => ChoiceChip(
-                            label: Text('$n'),
-                            selected: maxRes == n,
-                            onSelected: (_) =>
-                                setSheet(() => maxRes = maxRes == n ? null : n),
-                            selectedColor: const Color(0xFF3B82F6),
-                            labelStyle: TextStyle(
-                              color: maxRes == n
-                                  ? Colors.white
-                                  : (isDark ? Colors.white70 : Colors.black87),
-                              fontWeight: maxRes == n
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                            ),
-                          )),
-                      ChoiceChip(
-                        label: const Text('All'),
-                        selected: maxRes == null,
-                        onSelected: (_) => setSheet(() => maxRes = null),
-                        selectedColor: const Color(0xFF3B82F6),
-                        labelStyle: TextStyle(
-                          color: maxRes == null
-                              ? Colors.white
-                              : (isDark ? Colors.white70 : Colors.black87),
-                          fontWeight: maxRes == null
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Divider(color: divColor),
-
-                  // â”€â”€ Location (placeholder) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                  Row(
-                    children: [
-                      Icon(Icons.location_on_outlined,
-                          size: 16,
-                          color: isDark ? Colors.white24 : Colors.black26),
-                      const SizedBox(width: 6),
-                      Text('Location',
-                          style: labelStyle.copyWith(
-                              color: isDark
-                                  ? Colors.white24
-                                  : Colors.black26)),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                              color: isDark
-                                  ? Colors.white12
-                                  : Colors.black12),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text('GPS metadata required',
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: isDark
-                                    ? Colors.white24
-                                    : Colors.black26)),
-                      ),
-                    ],
-                  ),
                   const SizedBox(height: 24),
 
-                  // â”€â”€ Apply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                  // -- Apply --
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF3B82F6),
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
+                        backgroundColor: blue,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                       ),
@@ -385,15 +297,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
                         setState(() {
                           _startDate = start;
                           _endDate = end;
-                          _relevance = relevance;
-                          _maxResults = maxRes;
                         });
+                        _applyRelevance(relevance);
                         Navigator.of(ctx).pop();
                       },
                       child: const Text('Apply Filters',
                           style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600)),
+                              fontSize: 15, fontWeight: FontWeight.w600)),
                     ),
                   ),
                 ],
@@ -405,12 +315,11 @@ class _ResultsScreenState extends State<ResultsScreen> {
     );
   }
 
-  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = isDark ? Colors.white : Colors.black87;
+    final textColor = P.text(isDark);
     final indices = _filteredIndices;
 
     return Scaffold(
@@ -426,9 +335,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
           child: Container(
             height: 1,
             margin: const EdgeInsets.symmetric(horizontal: 16),
-            color: isDark
-                ? const Color(0x1F60A5FA)
-                : const Color(0x192563EB),
+            color: P.hairline(isDark),
           ),
         ),
         actions: [
@@ -438,7 +345,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
               IconButton(
                 icon: Icon(Icons.tune,
                     color: _hasActiveFilters
-                        ? const Color(0xFF3B82F6)
+                        ? P.accent(isDark)
                         : Theme.of(context)
                             .appBarTheme
                             .titleTextStyle
@@ -453,8 +360,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   child: Container(
                     width: 8,
                     height: 8,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF3B82F6),
+                    decoration: BoxDecoration(
+                      color: P.accent(isDark),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -468,6 +375,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildQueryHeader(context, isDark, textColor, indices),
+          if (_isExpanding)
+            LinearProgressIndicator(
+              minHeight: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(P.accent(isDark)),
+              backgroundColor: P.accent(isDark).withValues(alpha: 0.12),
+            ),
           Expanded(
             child: indices.isNotEmpty
                 ? _buildGrid(context, isDark, indices)
@@ -480,13 +393,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   Widget _buildQueryHeader(
       BuildContext context, bool isDark, Color textColor, List<int> indices) {
-    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
-    final blueSoft = isDark ? const Color(0x2E3B82F6) : const Color(0xFFDBEAFE);
-    final surface = isDark ? const Color(0xFF161B22) : Colors.white;
-    final border = isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0);
-    final textMore = isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B);
+    final blue = P.accent(isDark);
+    final blueSoft = P.accentSoft(isDark);
+    final surface = P.surface(isDark);
+    final border = P.border(isDark);
+    final textMore = P.textMore(isDark);
 
-    final total = widget.searchResult.resultCount;
+    final total = _activeResult.resultCount;
     final shown = indices.length;
     final subtitle = _hasActiveFilters
         ? '$shown of $total match${total == 1 ? '' : 'es'} · filtered'
@@ -512,33 +425,45 @@ class _ResultsScreenState extends State<ResultsScreen> {
         ),
         child: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration:
-                  BoxDecoration(color: blueSoft, shape: BoxShape.circle),
-              child: Icon(
-                  widget.searchResult.query.isEmpty
-                      ? Icons.image_search
-                      : Icons.search,
-                  size: 16,
-                  color: blue),
-            ),
+            if (widget.queryImage != null)
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [BoxShadow(color: blueSoft, spreadRadius: 2)],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.memory(widget.queryImage!, fit: BoxFit.cover),
+                ),
+              )
+            else
+              Container(
+                width: 32,
+                height: 32,
+                decoration:
+                    BoxDecoration(color: blueSoft, shape: BoxShape.circle),
+                child: Icon(
+                    widget.searchResult.query.isEmpty
+                        ? Icons.image_search
+                        : Icons.search,
+                    size: 16,
+                    color: blue),
+              ),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                      widget.searchResult.query.isEmpty
-                          ? 'Similar Images'
-                          : '"${widget.searchResult.query}"',
-                      style: TextStyle(
-                          color: textColor,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
+                  if (widget.searchResult.query.isNotEmpty)
+                    Text('"${widget.searchResult.query}"',
+                        style: TextStyle(
+                            color: textColor,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
                   Row(
                     children: [
                       Expanded(
@@ -548,12 +473,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
                       ),
                       if (_hasActiveFilters)
                         GestureDetector(
-                          onTap: () => setState(() {
-                            _startDate = null;
-                            _endDate = null;
-                            _relevance = _RelevanceBucket.off;
-                            _maxResults = null;
-                          }),
+                          onTap: () {
+                            setState(() {
+                              _startDate = null;
+                              _endDate = null;
+                            });
+                            _applyRelevance(_RelevanceBucket.off);
+                          },
                           child: Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 6, vertical: 2),
@@ -588,7 +514,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
 
   Widget _buildGrid(BuildContext context, bool isDark, List<int> indices) {
-    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
+    final blue = P.accent(isDark);
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
       child: GridView.builder(
@@ -601,11 +527,11 @@ class _ResultsScreenState extends State<ResultsScreen> {
         itemCount: indices.length,
         itemBuilder: (context, pos) {
           final origIndex = indices[pos];
-          final image = widget.searchResult.images[origIndex];
-          final score = widget.searchResult.scoreAt(origIndex);
+          final image = _activeResult.images[origIndex];
+          final score = _activeResult.scoreAt(origIndex);
           final isBest = pos == 0;
           return Material(
-            color: isDark ? const Color(0xFF1A2030) : const Color(0xFFE2EAF4),
+            color: P.surfaceAlt(isDark),
             borderRadius: BorderRadius.circular(14),
             child: InkWell(
               onTap: () => Navigator.of(context).push(
@@ -613,7 +539,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   builder: (_) => DetailsScreen(
                     image: image,
                     searchService: widget.searchService,
-                    imageList: widget.searchResult.images,
+                    imageList: _activeResult.images,
                     currentIndex: origIndex,
                     popCount: 2,
                   ),
@@ -635,23 +561,23 @@ class _ResultsScreenState extends State<ResultsScreen> {
                           ? Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                               decoration: BoxDecoration(color: blue, borderRadius: BorderRadius.circular(999)),
-                              child: Row(mainAxisSize: MainAxisSize.min, children: const [
-                                Icon(Icons.star_rounded, size: 11, color: Colors.white),
-                                SizedBox(width: 4),
-                                Text('Best match', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.star_rounded, size: 11, color: P.onAccent(isDark)),
+                                const SizedBox(width: 4),
+                                Text('Best match', style: TextStyle(color: P.onAccent(isDark), fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
                               ]),
                             )
                           : Container(
                               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                               decoration: BoxDecoration(color: blue, borderRadius: BorderRadius.circular(999)),
-                              child: Text('#${pos + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+                              child: Text('#${pos + 1}', style: TextStyle(color: P.onAccent(isDark), fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
                             ),
                     ),
                     // Confidence bars (not for best match)
                     if (!isBest && score != null)
                       Positioned(
                         bottom: 6, right: 6,
-                        child: _buildConfidenceBars(score, isDark),
+                        child: _buildConfidenceBars(score, _topScore, isDark),
                       ),
                   ],
                 ),
@@ -663,9 +589,15 @@ class _ResultsScreenState extends State<ResultsScreen> {
     );
   }
 
-  Widget _buildConfidenceBars(double score, bool isDark) {
-    final filled = score >= 0.85 ? 3 : score >= 0.70 ? 2 : 1;
-    final barColor = isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB);
+  double get _topScore {
+    final scores = _activeResult.scores;
+    return (scores != null && scores.isNotEmpty) ? scores.first : 1.0;
+  }
+
+  Widget _buildConfidenceBars(double score, double topScore, bool isDark) {
+    final ratio = topScore > 0 ? score / topScore : 0.0;
+    final filled = ratio >= 0.97 ? 3 : ratio >= 0.93 ? 2 : 1;
+    final barColor = P.accent(isDark);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
       decoration: BoxDecoration(
@@ -694,12 +626,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   Widget _placeholder(ImageItem image, bool isDark) {
     return Container(
-      color: isDark ? const Color(0xFF222A36) : const Color(0xFFE2EAF4),
+      color: P.surfaceHigh(isDark),
       child: Center(
         child: Icon(Icons.image_outlined,
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.3)
-                : Colors.black.withValues(alpha: 0.3),
+            color: P.textFaint(isDark),
             size: 48),
       ),
     );
@@ -716,14 +646,14 @@ class _ResultsScreenState extends State<ResultsScreen> {
             width: 100,
             height: 100,
             decoration: BoxDecoration(
-              border: Border.all(
-                  color: isDark ? const Color(0xFF1F2733) : const Color(0xFFBFD3E8), width: 2),
-              borderRadius: BorderRadius.circular(16),
+              color: P.accent(isDark).withValues(alpha: 0.12),
+              border: Border.all(color: P.accent(isDark).withValues(alpha: 0.35), width: 2),
+              borderRadius: BorderRadius.circular(24),
             ),
             child: Icon(
                 isFiltered ? Icons.filter_alt_off : Icons.search_off,
                 size: 48,
-                color: const Color(0xFF3B82F6)),
+                color: P.accent(isDark)),
           ),
           const SizedBox(height: 20),
           Text(
@@ -746,17 +676,18 @@ class _ResultsScreenState extends State<ResultsScreen> {
           const SizedBox(height: 24),
           if (isFiltered)
             ElevatedButton.icon(
-              onPressed: () => setState(() {
-                _startDate = null;
-                _endDate = null;
-                _relevance = _RelevanceBucket.off;
-                _maxResults = null;
-              }),
+              onPressed: () {
+                setState(() {
+                  _startDate = null;
+                  _endDate = null;
+                });
+                _applyRelevance(_RelevanceBucket.off);
+              },
               icon: const Icon(Icons.filter_alt_off),
               label: const Text('Clear Filters'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF3B82F6),
-                foregroundColor: Colors.white,
+                backgroundColor: P.accent(isDark),
+                foregroundColor: P.onAccent(isDark),
                 padding: const EdgeInsets.symmetric(
                     horizontal: 24, vertical: 12),
                 shape: RoundedRectangleBorder(
@@ -769,8 +700,8 @@ class _ResultsScreenState extends State<ResultsScreen> {
               icon: const Icon(Icons.search),
               label: const Text('New Search'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF3B82F6),
-                foregroundColor: Colors.white,
+                backgroundColor: P.accent(isDark),
+                foregroundColor: P.onAccent(isDark),
                 padding: const EdgeInsets.symmetric(
                     horizontal: 24, vertical: 12),
                 shape: RoundedRectangleBorder(
@@ -783,7 +714,6 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 }
 
-// â”€â”€ Small helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _DateButton extends StatelessWidget {
   final String label;
@@ -808,19 +738,18 @@ class _DateButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasDate = date != null;
+    final accent = P.accent(isDark);
     return OutlinedButton(
       onPressed: onTap,
       style: OutlinedButton.styleFrom(
         padding:
             const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
         side: BorderSide(
-            color: hasDate
-                ? const Color(0xFF3B82F6)
-                : (isDark ? Colors.white24 : Colors.black26)),
+            color: hasDate ? accent : P.border(isDark)),
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10)),
         backgroundColor: hasDate
-            ? const Color(0xFF3B82F6).withValues(alpha: 0.08)
+            ? accent.withValues(alpha: 0.12)
             : Colors.transparent,
       ),
       child: Row(
@@ -828,21 +757,16 @@ class _DateButton extends StatelessWidget {
         children: [
           Icon(Icons.calendar_today,
               size: 14,
-              color: hasDate
-                  ? const Color(0xFF3B82F6)
-                  : (isDark ? Colors.white38 : Colors.black38)),
+              color: hasDate ? accent : P.textFaint(isDark)),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
               _display,
               style: TextStyle(
                   fontSize: 12,
-                  color: hasDate
-                      ? const Color(0xFF3B82F6)
-                      : (isDark ? Colors.white54 : Colors.black54),
-                  fontWeight: hasDate
-                      ? FontWeight.w600
-                      : FontWeight.normal),
+                  color: hasDate ? accent : P.textMore(isDark),
+                  fontWeight:
+                      hasDate ? FontWeight.w600 : FontWeight.normal),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -850,8 +774,7 @@ class _DateButton extends StatelessWidget {
             const SizedBox(width: 4),
             GestureDetector(
               onTap: onClear,
-              child: const Icon(Icons.close,
-                  size: 14, color: Color(0xFF3B82F6)),
+              child: Icon(Icons.close, size: 14, color: accent),
             ),
           ],
         ],

@@ -11,7 +11,7 @@ import '../../state/settings_controller.dart';
 import '../theme/theme_notifier.dart';
 import 'home_screen.dart';
 
-// ── Theme palette ─────────────────────────────────────────────────────────────
+// -- Theme palette -------------------------------------------------------------
 // All colors that differ between dark and light mode live here. Pick a palette
 // in build() via `widget.themeNotifier.isDarkMode` and pass it down.
 class _Palette {
@@ -260,7 +260,7 @@ class _StartupScreenState extends State<StartupScreen>
     }
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // -- Build ------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -321,7 +321,7 @@ class _StartupScreenState extends State<StartupScreen>
     );
   }
 
-  // ── Ambient helpers ────────────────────────────────────────────────────────
+  // -- Ambient helpers --------------------------------------------------------
 
   Widget _buildWater(_Palette p) {
     return ShaderMask(
@@ -430,7 +430,7 @@ class _StartupScreenState extends State<StartupScreen>
     );
   }
 
-  // ── Logo ───────────────────────────────────────────────────────────────────
+  // -- Logo -------------------------------------------------------------------
 
   Widget _buildLogoArea() {
     const logoSize = 180.0;
@@ -450,7 +450,7 @@ class _StartupScreenState extends State<StartupScreen>
     );
   }
 
-  // ── Status area ────────────────────────────────────────────────────────────
+  // -- Status area ------------------------------------------------------------
 
   Widget _buildStatusArea(_Palette p) {
     if (_progress.phase == IndexingPhase.error) {
@@ -620,7 +620,7 @@ class _StartupScreenState extends State<StartupScreen>
   }
 }
 
-// ── Painters ───────────────────────────────────────────────────────────────────
+// -- Painters -------------------------------------------------------------------
 
 class _RingPainter extends CustomPainter {
   final double? fraction;
@@ -760,7 +760,7 @@ class _WaterPainter extends CustomPainter {
   bool shouldRepaint(_) => true;
 }
 
-// ── Status card (error / partial-failure) ──────────────────────────────────────
+// -- Status card (error / partial-failure) --------------------------------------
 
 class _StatusCard extends StatelessWidget {
   final _Palette palette;

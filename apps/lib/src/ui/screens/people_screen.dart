@@ -7,6 +7,7 @@ import '../../services/face_service.dart';
 import '../../services/image_search_service.dart';
 import 'person_detail_screen.dart';
 
+import '../theme/palette.dart';
 /// Screen showing all identified persons from face recognition.
 ///
 /// Displays a grid of person clusters with representative thumbnails.
@@ -156,14 +157,14 @@ class _PeopleScreenState extends State<PeopleScreen> {
             children: [
               Icon(Icons.face_retouching_off,
                   size: 64,
-                  color: isDark ? Colors.white38 : Colors.black38),
+                  color: P.textFaint(isDark)),
               const SizedBox(height: 16),
               Text(
                 'Face Recognition Unavailable',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white70 : Colors.black87,
+                  color: P.textDim(isDark),
                 ),
               ),
               const SizedBox(height: 8),
@@ -172,7 +173,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
                 'The image search feature works normally without this.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    color: isDark ? Colors.white54 : Colors.black54),
+                    color: P.textMore(isDark)),
               ),
             ],
           ),
@@ -200,7 +201,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white70 : Colors.black87,
+                  color: P.textDim(isDark),
                 ),
               ),
               if (hasProgress) ...[
@@ -210,7 +211,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
                   '  ·  ${state.facesFound} faces found',
                   style: TextStyle(
                     fontSize: 13,
-                    color: isDark ? Colors.white54 : Colors.black54,
+                    color: P.textMore(isDark),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -235,14 +236,14 @@ class _PeopleScreenState extends State<PeopleScreen> {
             children: [
               Icon(Icons.face_outlined,
                   size: 64,
-                  color: isDark ? Colors.white38 : Colors.black38),
+                  color: P.textFaint(isDark)),
               const SizedBox(height: 16),
               Text(
                 'Find People',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white70 : Colors.black87,
+                  color: P.textDim(isDark),
                 ),
               ),
               const SizedBox(height: 8),
@@ -250,7 +251,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
                 'Scan your gallery to detect and group faces.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    color: isDark ? Colors.white54 : Colors.black54),
+                    color: P.textMore(isDark)),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
@@ -276,7 +277,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
               '${_persons.length == 1 ? 'person' : 'people'} '
               'found in ${_faceService!.faceCount} faces',
               style: TextStyle(
-                  color: isDark ? Colors.white54 : Colors.black54,
+                  color: P.textMore(isDark),
                   fontSize: 13),
             ),
           ),
@@ -330,7 +331,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
               fontSize: 12,
               fontWeight:
                   person.isLabeled ? FontWeight.w600 : FontWeight.normal,
-              color: isDark ? Colors.white70 : Colors.black87,
+              color: P.textDim(isDark),
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

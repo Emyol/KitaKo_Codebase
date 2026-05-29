@@ -18,11 +18,11 @@ class ImageLoaderService {
 
   bool _isInitialized = false;
 
-  // ── Image source toggle ────────────────────────────────────────────────────
+  // -- Image source toggle ----------------------------------------------------
   // Full device gallery  →  static const String? _kTestAlbum = null;
   // personal_1k dataset  →  static const String? _kTestAlbum = 'personal_1k';
-  // ──────────────────────────────────────────────────────────────────────────
-  static const String? _kTestAlbum = 'personal_1k';
+  // --------------------------------------------------------------------------
+  static const String? _kTestAlbum = null;
 
   /// Album the in-app camera writes new captures into.
   ///
@@ -121,7 +121,7 @@ class ImageLoaderService {
         return true;
       }
 
-      // ── Pick source album ────────────────────────────────────────────────
+      // -- Pick source album ------------------------------------------------
       // Prefer matching by album name (works on all Android versions); fall
       // back to the full "All Photos" album if the test album isn't found.
       AssetPathEntity? sourceAlbum;

@@ -1,13 +1,14 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../services/embedding_service.dart';
 import '../../services/image_search_service.dart';
 import '../../services/search_history_service.dart';
 import '../../state/settings_controller.dart';
 import '../theme/theme_notifier.dart';
-
+import '../theme/palette.dart';
 class SettingsScreen extends StatefulWidget {
   final ThemeNotifier themeNotifier;
   final ImageSearchService searchService;
@@ -27,14 +28,56 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late bool _useAccuracyMode;
   int _galleryColumns = 3;
+  bool _forceTopPending = false;
 
-  static const List<ModelVariant> _variants = [
-    ModelVariant.kitakoFp32,
-    ModelVariant.kitakoMixed,
-    ModelVariant.kitakoInt8,
-  ];
+  // Easter-egg trigger: 15 fast consecutive dark-mode toggles flip girly-pop.
+  // A tap counts as part of the streak only if it lands within
+  // [_kSpamWindow] of the previous one; the streak resets otherwise.
+  static const _kSpamCount  = 15;
+  static const _kSpamWindow = Duration(milliseconds: 600);
+  int _darkTapStreak = 0;
+  DateTime? _lastDarkTap;
 
   static const _kColKey = 'gallery_columns';
+
+  void _onDarkModeTap() {
+    // Secret off-switch: when girly is on AND the gallery columns are
+    // maxed at 6, a single dark-mode tap turns girly back off (no spam
+    // streak, no modal).
+    if (widget.themeNotifier.girlyPop && _galleryColumns == 6) {
+      widget.themeNotifier.setGirlyPop(false);
+      _darkTapStreak = 0;
+      _lastDarkTap = null;
+      return;
+    }
+
+    final now = DateTime.now();
+    if (_lastDarkTap != null && now.difference(_lastDarkTap!) < _kSpamWindow) {
+      _darkTapStreak++;
+    } else {
+      _darkTapStreak = 1;
+    }
+    _lastDarkTap = now;
+    widget.themeNotifier.toggleTheme(!widget.themeNotifier.isDarkMode);
+    if (_darkTapStreak >= _kSpamCount && !widget.themeNotifier.girlyPop) {
+      _darkTapStreak = 0;
+      widget.themeNotifier.setGirlyPop(true);
+      _showGirlyPopReveal();
+    }
+  }
+
+  void _showGirlyPopReveal() {
+    showGeneralDialog<void>(
+      context: context,
+      // Block all taps for the full 2-second reveal — the modal is the moment,
+      // it shouldn't be dismissable by accident.
+      barrierDismissible: false,
+      barrierLabel: 'girly-pop',
+      barrierColor: Colors.black54,
+      transitionDuration: Duration.zero,
+      pageBuilder: (_, _, _) => const _GirlyPopReveal(),
+    );
+  }
 
   @override
   void initState() {
@@ -57,45 +100,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _galleryColumns = count);
   }
 
-  // ── Actions ────────────────────────────────────────────────────────────────
-
-  Future<void> _onVariantTap(ModelVariant variant) async {
-    if (variant == widget.settingsController.selectedVariant) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Switch embedding model?'),
-        content: Text(
-          'Switch to ${variant.displayName}? The app will reload the model '
-          'and may re-embed images if the vision encoder changed.',
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Switch')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    await _runBlocking(
-      title: 'Switching model',
-      subtitle: 'Loading ${variant.displayName}…',
-      action: () async {
-        await widget.settingsController.setSelectedVariant(variant);
-        final ok = await widget.searchService.switchVariant(variant);
-        if (!ok) {
-          throw StateError(
-            'Failed to load ${variant.displayName}. '
-            'Verify the ONNX files are present.',
-          );
-        }
-      },
-    );
-    if (mounted) setState(() {});
-  }
+  // -- Actions ----------------------------------------------------------------
 
   Future<void> _onClearCacheTap() async {
     final confirmed = await showDialog<bool>(
@@ -178,27 +183,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) Navigator.of(context, rootNavigator: true).pop();
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // -- Build ------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bg         = isDark ? const Color(0xFF0E1116) : const Color(0xFFF4F7FB);
-    final surface    = isDark ? const Color(0xFF161B22) : Colors.white;
-    final border     = isDark ? const Color(0xFF1F2733) : const Color(0xFFE2E8F0);
-    final hairline   = isDark ? const Color(0x1F60A5FA) : const Color(0x192563EB);
-    final blue       = isDark ? const Color(0xFF3B82F6) : const Color(0xFF2563EB);
-    final blueSoft   = isDark ? const Color(0x2E3B82F6) : const Color(0xFFDBEAFE);
-    final titleColor = isDark ? const Color(0xFF60A5FA) : const Color(0xFF0B2545);
-    final textColor  = isDark ? Colors.white : const Color(0xFF0F172A);
+    final bg         = P.bg(isDark);
+    final surface    = P.surface(isDark);
+    final border     = P.border(isDark);
+    final hairline   = P.hairline(isDark);
+    final blue       = P.accent(isDark);
+    final blueSoft   = P.accentSoft(isDark);
+    final titleColor = P.title(isDark);
+    final textColor  = P.text(isDark);
     final textDim    = isDark ? const Color(0xC7FFFFFF) : const Color(0xFF475569);
-    final textMore   = isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B);
-    final textFaint  = isDark ? const Color(0x61FFFFFF) : const Color(0xFF94A3B8);
+    final textMore   = P.textMore(isDark);
+    final textFaint  = P.textFaint(isDark);
     final surfaceHigh= isDark ? const Color(0xFF222A36) : const Color(0xFFE2EAF4);
     final red        = isDark ? const Color(0xFFEF4444) : const Color(0xFFDC2626);
 
-    final selected = widget.settingsController.selectedVariant;
     final isReady  = widget.searchService.embeddingService.isInitialized;
     final indexed  = widget.searchService.indexedImageCount;
 
@@ -231,7 +235,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         children: [
-          // ── APPEARANCE ──────────────────────────────────────────────────────
+          // -- APPEARANCE ------------------------------------------------------
           _SectionLabel(label: 'Appearance', blue: blue, textDim: textDim),
           _KKCard(
             surface: surface,
@@ -252,8 +256,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 textColor: textColor,
                 textMore: textMore,
                 hairline: hairline,
-                onTap: () => widget.themeNotifier
-                    .toggleTheme(!widget.themeNotifier.isDarkMode),
+                onTap: _onDarkModeTap,
               ),
               // Gallery columns
               Padding(
@@ -307,7 +310,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               child: Text('$n',
                                   style: TextStyle(
                                     color:
-                                        sel ? Colors.white : textColor,
+                                        sel ? P.onAccent(isDark) : textColor,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
                                   )),
@@ -322,7 +325,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
 
-          // ── SEARCH ──────────────────────────────────────────────────────────
+          // -- SEARCH ----------------------------------------------------------
           _SectionLabel(label: 'Search', blue: blue, textDim: textDim),
           _KKCard(
             surface: surface,
@@ -405,18 +408,172 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   height: 1,
                   margin: const EdgeInsets.symmetric(horizontal: 14),
                   color: hairline),
-              _KKRow(
-                icon: Icons.language_outlined,
-                label: 'Taglish normalization',
-                sub: '"nagshopping aq" → "nag shopping ako"',
-                right: _KKToggle(
-                    on: true, blue: blue, surfaceHigh: surfaceHigh),
-                blue: blue,
-                blueSoft: blueSoft,
-                textColor: textColor,
-                textMore: textMore,
-                hairline: hairline,
+              // Force Top Results
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32, height: 32,
+                          decoration: BoxDecoration(
+                              color: blueSoft,
+                              borderRadius: BorderRadius.circular(10)),
+                          child: Icon(Icons.filter_list, size: 16, color: blue),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Always show top results',
+                                  style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500)),
+                              Text(
+                                widget.searchService.forceTopN != null
+                                    ? 'Showing top ${widget.searchService.forceTopN} regardless of score'
+                                    : 'Off · only relevant results shown',
+                                style: TextStyle(color: textMore, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (widget.searchService.forceTopN == null && !_forceTopPending) ...[
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: border),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          onPressed: () => setState(() => _forceTopPending = true),
+                          child: Text('Enable',
+                              style: TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600,
+                                color: textColor,
+                              )),
+                        ),
+                      ),
+                    ],
+                    if (_forceTopPending && widget.searchService.forceTopN == null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF59E0B).withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color(0xFFF59E0B).withValues(alpha: 0.30),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning_amber_rounded, size: 16,
+                                color: isDark
+                                    ? const Color(0xFFFBBF24)
+                                    : const Color(0xFFD97706)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'This may show photos that don\'t match your query.',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: isDark
+                                      ? const Color(0xFFFBBF24)
+                                      : const Color(0xFFD97706),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: const Color(0xFFF59E0B).withValues(alpha: 0.5),
+                            ),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          onPressed: () => setState(() {
+                            widget.searchService.forceTopN = 10;
+                            _forceTopPending = false;
+                          }),
+                          child: Text('Confirm — Enable Force Top Results',
+                              style: TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600,
+                                color: isDark
+                                    ? const Color(0xFFFBBF24)
+                                    : const Color(0xFFD97706),
+                              )),
+                        ),
+                      ),
+                    ],
+                    if (widget.searchService.forceTopN != null) ...[
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [10, 20, 50, 100].map((n) {
+                          final sel = widget.searchService.forceTopN == n;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: GestureDetector(
+                              onTap: () => setState(() {
+                                widget.searchService.forceTopN = n;
+                              }),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 120),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: sel ? blue : surfaceHigh,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                      color: sel ? blue : border, width: 1.5),
+                                ),
+                                child: Text('$n',
+                                    style: TextStyle(
+                                      color: sel ? P.onAccent(isDark) : textColor,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    )),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 8),
+                      GestureDetector(
+                        onTap: () => setState(() {
+                          widget.searchService.forceTopN = null;
+                        }),
+                        child: Text('Disable',
+                            style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w600,
+                              color: red,
+                            )),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                  ],
+                ),
               ),
+              Container(
+                  height: 1,
+                  margin: const EdgeInsets.symmetric(horizontal: 14),
+                  color: hairline),
               _KKRow(
                 icon: Icons.history,
                 label: 'Clear search history',
@@ -434,78 +591,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
 
-          // ── MODELS (developer only) ─────────────────────────────────────────
-          if (kDebugMode) ...[
+          // -- MODELS --------------------------------------------------------
           _SectionLabel(label: 'Models', blue: blue, textDim: textDim),
           _KKCard(
             surface: surface,
             border: border,
             isDark: isDark,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        _iconBadge(Icons.memory, blue, blueSoft),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Embedding model',
-                                  style: TextStyle(
-                                      color: textColor,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500)),
-                              Text('SigLIP image + text encoder pair',
-                                  style: TextStyle(
-                                      color: textMore, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        for (var i = 0; i < _variants.length; i++) ...[
-                          if (i > 0) const SizedBox(width: 10),
-                          Expanded(
-                            child: _KKChoiceCard(
-                              label: const ['FP32', 'Hybrid', 'INT8'][i],
-                              sub: const [
-                                'Full precision',
-                                'FP32 + INT8',
-                                'Smallest'
-                              ][i],
-                              icon: const [
-                                Icons.high_quality,
-                                Icons.memory,
-                                Icons.speed_outlined
-                              ][i],
-                              selected: selected == _variants[i],
-                              blue: blue,
-                              surface: surface,
-                              border: border,
-                              textColor: textColor,
-                              textMore: textMore,
-                              isDark: isDark,
-                              onTap: () => _onVariantTap(_variants[i]),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                  height: 1,
-                  margin: const EdgeInsets.symmetric(horizontal: 14),
-                  color: hairline),
               _KKRow(
                 icon: Icons.image_outlined,
                 label: 'Image encoder',
@@ -535,9 +627,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
-          ], // kDebugMode Models
 
-          // ── INDEXING & STORAGE ───────────────────────────────────────────────
+          // -- INDEXING & STORAGE -----------------------------------------------
           _SectionLabel(
               label: 'Indexing & Storage', blue: blue, textDim: textDim),
           _KKCard(
@@ -584,7 +675,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
 
-          // ── ABOUT ────────────────────────────────────────────────────────────
+          // -- ABOUT ------------------------------------------------------------
           _SectionLabel(label: 'About', blue: blue, textDim: textDim),
           _KKCard(
             surface: surface,
@@ -594,8 +685,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _KKRow(
                 icon: Icons.info_outline,
                 label: 'Version',
-                sub: '2.0.0 · v2-system-ric',
-                right: Text('build 142',
+                sub: '1.0.0 · release',
+                right: Text('release',
                     style: TextStyle(color: textMore, fontSize: 12)),
                 blue: blue,
                 blueSoft: blueSoft,
@@ -606,29 +697,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
-
-          if (kDebugMode) ...[
-            _SectionLabel(label: 'Debug', blue: blue, textDim: textDim),
-            _KKCard(
-              surface: surface,
-              border: border,
-              isDark: isDark,
-              children: [
-                _KKRow(
-                  icon: Icons.bug_report_outlined,
-                  label: 'Debug build',
-                  sub: 'Model switching enabled in this build',
-                  right: const SizedBox.shrink(),
-                  blue: blue,
-                  blueSoft: blueSoft,
-                  textColor: textColor,
-                  textMore: textMore,
-                  hairline: hairline,
-                  last: true,
-                ),
-              ],
-            ),
-          ],
 
           const SizedBox(height: 20),
           Text(
@@ -652,7 +720,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
-// ── Private widgets ────────────────────────────────────────────────────────────
+// -- Private widgets ------------------------------------------------------------
 
 class _SectionLabel extends StatelessWidget {
   final String label;
@@ -819,6 +887,9 @@ class _KKToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // Thumb contrasts with whichever track it's on top of.
+    final thumbColor = on ? P.onAccent(isDark) : Colors.white;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 120),
       width: 42,
@@ -834,10 +905,10 @@ class _KKToggle extends StatelessWidget {
           width: 22,
           height: 22,
           margin: const EdgeInsets.all(2),
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: thumbColor,
             shape: BoxShape.circle,
-            boxShadow: [
+            boxShadow: const [
               BoxShadow(
                   color: Color(0x40000000),
                   blurRadius: 3,
@@ -885,7 +956,7 @@ class _KKChoiceCard extends StatelessWidget {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: selected ? blue : (isDark ? surface : Colors.white),
+          color: selected ? blue : P.surface(isDark),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
               color: selected ? blue : border, width: 1.5),
@@ -895,11 +966,11 @@ class _KKChoiceCard extends StatelessWidget {
           children: [
             Icon(icon,
                 size: 20,
-                color: selected ? Colors.white : blue),
+                color: selected ? P.onAccent(isDark) : blue),
             const SizedBox(height: 8),
             Text(label,
                 style: TextStyle(
-                  color: selected ? Colors.white : textColor,
+                  color: selected ? P.onAccent(isDark) : textColor,
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                   letterSpacing: -0.2,
@@ -908,7 +979,7 @@ class _KKChoiceCard extends StatelessWidget {
             Text(sub,
                 style: TextStyle(
                   color: selected
-                      ? Colors.white.withValues(alpha: 0.85)
+                      ? P.onAccent(isDark).withValues(alpha: 0.85)
                       : textMore,
                   fontSize: 11,
                 )),
@@ -937,7 +1008,7 @@ class _KKStatusPill extends StatelessWidget {
       color = isDark ? const Color(0xFFF59E0B) : const Color(0xFFD97706);
       bg = const Color(0x24F59E0B);
     } else {
-      color = isDark ? const Color(0x8CFFFFFF) : const Color(0xFF64748B);
+      color = P.textMore(isDark);
       bg = isDark ? const Color(0xFF222A36) : const Color(0xFFF1F5F9);
     }
 
@@ -974,38 +1045,200 @@ class _BlockingOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Dialog(
-      backgroundColor: const Color(0xFF161B22),
+      backgroundColor: P.surface(isDark),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: Color(0xFF1F2733)),
+        side: BorderSide(color: P.border(isDark)),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(
+            SizedBox(
               width: 36,
               height: 36,
               child: CircularProgressIndicator(
                 strokeWidth: 2.5,
-                valueColor:
-                    AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
+                valueColor: AlwaysStoppedAnimation<Color>(P.accent(isDark)),
               ),
             ),
             const SizedBox(height: 20),
             Text(title,
-                style: const TextStyle(
-                    color: Colors.white,
+                style: TextStyle(
+                    color: P.text(isDark),
                     fontSize: 15,
                     fontWeight: FontWeight.w600)),
             const SizedBox(height: 6),
             Text(subtitle,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: Color(0xFF60A5FA), fontSize: 12)),
+                style: TextStyle(
+                    color: P.title(isDark), fontSize: 12)),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Girly-pop reveal modal — fired when the dark-mode toggle is tapped 15 times
+// in fast succession. A big "💅" scales in (small → big, easeInOutCubic) with
+// a brief rotation wobble at the end, and once it lands a ring of star
+// glitters bursts outward and fades.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GirlyPopReveal extends StatefulWidget {
+  const _GirlyPopReveal();
+
+  @override
+  State<_GirlyPopReveal> createState() => _GirlyPopRevealState();
+}
+
+class _GirlyPopRevealState extends State<_GirlyPopReveal>
+    with TickerProviderStateMixin {
+  late final AnimationController _entry;
+  late final AnimationController _glitter;
+  late final Animation<double> _scale;
+  late final Animation<double> _rotate;
+  Timer? _autoClose;
+
+  // 10 stars positioned around the emoji at evenly-spaced angles.
+  static const _kStars = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _entry = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _glitter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 850),
+    );
+
+    // Scale 0 -> 1 covers the first 75% of the entry, eased so the emoji
+    // pops out softly.
+    _scale = CurvedAnimation(
+      parent: _entry,
+      curve: const Interval(0.0, 0.75, curve: Curves.easeInOutCubic),
+    );
+    // Rotation wobble kicks in at the end — quick back-and-forth then settles.
+    _rotate = TweenSequence<double>([
+      TweenSequenceItem(tween: ConstantTween(0.0), weight: 70),
+      TweenSequenceItem(
+          tween: Tween(begin: 0.0, end: 0.18), weight: 10),
+      TweenSequenceItem(
+          tween: Tween(begin: 0.18, end: -0.10), weight: 10),
+      TweenSequenceItem(
+          tween: Tween(begin: -0.10, end: 0.0), weight: 10),
+    ]).animate(CurvedAnimation(parent: _entry, curve: Curves.easeInOut));
+
+    _entry.forward();
+    _entry.addStatusListener((s) {
+      if (s == AnimationStatus.completed) _glitter.forward();
+    });
+    // Locked on-screen time. Taps are ignored (see [IgnorePointer] below),
+    // so this is the only way out.
+    _autoClose = Timer(const Duration(milliseconds: 2000), () {
+      if (mounted) Navigator.of(context).maybePop();
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoClose?.cancel();
+    _entry.dispose();
+    _glitter.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: true,
+      child: Center(
+        child: SizedBox(
+          width: 320,
+          height: 320,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              AnimatedBuilder(
+                animation: _glitter,
+                builder: (context, _) {
+                  final t = _glitter.value;
+                  if (t == 0) return const SizedBox.shrink();
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: List.generate(_kStars, (i) {
+                      final angle = (i / _kStars) * 2 * math.pi;
+                      final delay = (i % 5) * 0.05;
+                      final localT = ((t - delay).clamp(0.0, 1.0)) /
+                          (1.0 - delay).clamp(0.01, 1.0);
+                      final eased = Curves.easeOut.transform(localT);
+                      final radius = 30 + 90 * eased;
+                      final dx = math.cos(angle) * radius;
+                      final dy = math.sin(angle) * radius;
+                      final opacity = localT < 0.4
+                          ? localT / 0.4
+                          : (1 - ((localT - 0.4) / 0.6)).clamp(0.0, 1.0);
+                      final size = 14.0 + 10 * (1 - eased);
+                      return Transform.translate(
+                        offset: Offset(dx, dy),
+                        child: Opacity(
+                          opacity: opacity,
+                          child: Transform.rotate(
+                            angle: angle + eased * math.pi,
+                            child: Icon(
+                              Icons.star_rounded,
+                              size: size,
+                              color: const Color(0xFFFFF1F5),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  );
+                },
+              ),
+              AnimatedBuilder(
+                animation: _entry,
+                builder: (context, _) {
+                  return Transform.scale(
+                    scale: _scale.value,
+                    child: Transform.rotate(
+                      angle: _rotate.value,
+                      child: const Text(
+                        '💅',
+                        style: TextStyle(
+                          fontSize: 180,
+                          // Suppress the default yellow underline that
+                          // Flutter draws when Text has no Material ancestor
+                          // (showGeneralDialog doesn't insert one).
+                          decoration: TextDecoration.none,
+                          shadows: [
+                            Shadow(
+                              color: Color(0x80EC4899),
+                              blurRadius: 40,
+                            ),
+                            Shadow(
+                              color: Color(0x40FFFFFF),
+                              blurRadius: 80,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );

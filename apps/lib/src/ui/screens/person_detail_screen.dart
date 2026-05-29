@@ -7,6 +7,7 @@ import '../../services/face_service.dart';
 import '../../services/image_search_service.dart';
 import '../../models/search_models.dart';
 
+import '../theme/palette.dart';
 /// Detail screen for a single identified person.
 ///
 /// Shows the person's representative thumbnail, label/name, face count,
@@ -163,9 +164,7 @@ class _PersonDetailScreenState extends State<PersonDetailScreen> {
                               child: Text(
                                 'No photos found for this person',
                                 style: TextStyle(
-                                  color: isDark
-                                      ? Colors.white54
-                                      : Colors.black54,
+                                  color: P.textMore(isDark),
                                 ),
                               ),
                             ),
@@ -234,7 +233,7 @@ class _PersonDetailScreenState extends State<PersonDetailScreen> {
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.bold,
-              color: isDark ? Colors.white : Colors.black87,
+              color: P.text(isDark),
             ),
           ),
           const SizedBox(height: 4),
@@ -244,7 +243,7 @@ class _PersonDetailScreenState extends State<PersonDetailScreen> {
             'in ${_images.length} '
             '${_images.length == 1 ? 'photo' : 'photos'}',
             style: TextStyle(
-                color: isDark ? Colors.white54 : Colors.black54),
+                color: P.textMore(isDark)),
           ),
           const SizedBox(height: 12),
           if (!_person.isLabeled)
@@ -261,7 +260,7 @@ class _PersonDetailScreenState extends State<PersonDetailScreen> {
   Widget _buildImageTile(ImageItem image, bool isDark) {
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1A2030) : const Color(0xFFE2EAF4),
+        color: P.surfaceAlt(isDark),
         borderRadius: BorderRadius.circular(8),
       ),
       child: ClipRRect(
