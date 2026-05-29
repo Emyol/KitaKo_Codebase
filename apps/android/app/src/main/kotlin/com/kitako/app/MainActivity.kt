@@ -1,4 +1,4 @@
-package com.example.kitako_app
+package com.kitako.app
 
 import android.content.ComponentCallbacks2
 import android.content.res.Configuration
@@ -6,6 +6,7 @@ import android.os.Debug
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity : FlutterActivity() {
 
@@ -53,6 +54,38 @@ class MainActivity : FlutterActivity() {
                                 "maxLevel" to trimMaxLevel,
                             )
                         )
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // ── Install-time asset-pack model extraction ────────────────────────
+        // Models ship in the ":models_pack" install-time Play Asset Delivery
+        // pack. install-time packs are fused into the app's AssetManager, so
+        // their files are reachable via assets.open("models/<name>") on first
+        // launch with no runtime network. We stream each model to a caller-
+        // supplied destination path (the Flutter app documents directory) so
+        // large files never cross the method channel.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "kitako_app/models")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "copyAsset" -> {
+                        val assetPath = call.argument<String>("assetPath")
+                        val destPath = call.argument<String>("destPath")
+                        if (assetPath == null || destPath == null) {
+                            result.error("ARG", "assetPath and destPath required", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            assets.open(assetPath).use { input ->
+                                File(destPath).outputStream().use { output ->
+                                    input.copyTo(output, 1024 * 1024)
+                                }
+                            }
+                            result.success(true)
+                        } catch (e: Throwable) {
+                            result.error("COPY_FAILED", e.message, null)
+                        }
                     }
                     else -> result.notImplemented()
                 }

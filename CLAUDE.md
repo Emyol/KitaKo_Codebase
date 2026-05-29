@@ -8,21 +8,21 @@ steps needed to get a fresh clone working on a new machine.
 
 ## 1. Active branch
 
-**`v2-system-ric`** is the primary development branch. `master` is the older
-baseline. Always work from `v2-system-ric` unless explicitly switching.
+**`master`** is the primary development branch. Always work from `master`
+unless explicitly switching.
 
 Other remote branches for reference:
 | Branch | Purpose |
 |--------|---------|
-| `master` | Pre-ONNX TFLite baseline (largely superseded) |
-| `feat/siglip1-aligned-embeddings` | Earlier SigLIP alignment work, merged into v2 |
-| `feature/onnx-embedding-improvements` | ONNX iteration, merged into v2 |
-| `origin/feat/face_recognition` | Face recognition prototype, merged into v2 |
+| `v2-system-ric` | Former primary dev branch (superseded by `master`) |
+| `feat/siglip1-aligned-embeddings` | Earlier SigLIP alignment work, merged in |
+| `feature/onnx-embedding-improvements` | ONNX iteration, merged in |
+| `origin/feat/face_recognition` | Face recognition prototype (now removed) |
 | `origin/ann-algo` | IVF-PQ ANN experiments |
 
 ---
 
-## 2. What `v2-system-ric` adds over `master`
+## 2. What the current system adds over the pre-ONNX TFLite baseline
 
 ### Embedding pipeline (ONNX, replaces TFLite)
 - **`packages/kitako_embedding/`** — complete rewrite
@@ -145,7 +145,7 @@ private storage on first launch.
 
 ## 4. Uncommitted working-tree changes (as of 2026-04-28)
 
-These changes are on `v2-system-ric` but not yet committed. A new Claude on a
+These changes are on `master` but not yet committed. A new Claude on a
 fresh clone will NOT see them unless they're committed or the original machine's
 changes are pushed:
 
@@ -194,7 +194,7 @@ working-tree changes from the original machine first.
 # 1. Clone
 git clone <remote-url>
 cd KitaKo_Codebase
-git checkout v2-system-ric
+git checkout master
 
 # 2. Pull LFS objects (models, tokenizer)
 git lfs install   # only needed once per machine

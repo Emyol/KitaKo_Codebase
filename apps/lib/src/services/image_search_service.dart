@@ -8,7 +8,6 @@ import 'embedding_service.dart';
 import 'embedding_storage_service.dart';
 import 'ann_search_service.dart';
 import 'query_assist_service.dart';
-import 'face_service.dart';
 
 /// High-level phase of the startup indexing pipeline.
 enum IndexingPhase {
@@ -92,21 +91,14 @@ class ImageSearchService {
   final TaglishNormalizer _normalizer = const TaglishNormalizer();
   final QueryAssistService _queryAssist = QueryAssistService();
 
-  /// Optional face recognition service. Null = face features disabled.
-  final FaceService? _faceService;
-
   /// Create a new ImageSearchService with optional custom services.
-  ///
-  /// [faceService] is fully optional — omit to disable face features.
   ImageSearchService({
     ImageLoaderService? imageLoader,
     EmbeddingService? embeddingService,
     ANNSearchService? annSearchService,
-    FaceService? faceService,
   }) : _imageLoader = imageLoader ?? ImageLoaderService(),
        _embeddingService = embeddingService ?? EmbeddingService(),
-       _annSearch = annSearchService ?? ANNSearchService(),
-       _faceService = faceService;
+       _annSearch = annSearchService ?? ANNSearchService();
 
   // ========== State Management ==========
 
@@ -176,75 +168,13 @@ class ImageSearchService {
 
   // ========== Service Access ==========
 
-  /// Access to image loader service (for alpha testing and person detail screen)
+  /// Access to image loader service (used by the search/details screens).
   ImageLoaderService get imageLoader => _imageLoader;
-
-  /// Access to ANN search service (for alpha testing with brute force)
-  ANNSearchService get annSearchService => _annSearch;
-
-  /// Access to face service. Null when face recognition is disabled.
-  FaceService? get faceService => _faceService;
-
-  /// Whether face recognition features are available.
-  bool get isFaceSearchAvailable => _faceService?.isAvailable ?? false;
-
-  /// Run face detection + clustering over the loaded gallery.
-  ///
-  /// Call this once after [FaceService.tryAutoInitialize] returns true.
-  /// Images are loaded and processed in small batches so peak memory stays
-  /// bounded; the face pipeline is released between batches by the GC.
-  Future<void> startFaceIndexing() async {
-    final face = _faceService;
-    if (face == null || !face.isAvailable) return;
-
-    final images = getAllImages();
-    if (images.isEmpty) return;
-
-    debugPrint('ImageSearchService: Starting face indexing for ${images.length} images');
-
-    const batchSize = 10;
-    for (int i = 0; i < images.length; i += batchSize) {
-      final batch = images.sublist(i, (i + batchSize).clamp(0, images.length));
-      final entries = <MapEntry<String, Uint8List>>[];
-
-      for (final img in batch) {
-        try {
-          final bytes = await _imageLoader.loadImageBytes(img.id);
-          if (bytes != null) entries.add(MapEntry(img.id, bytes));
-        } catch (e) {
-          debugPrint('ImageSearchService: Face indexing — skipping ${img.id}: $e');
-        }
-      }
-
-      if (entries.isNotEmpty) {
-        await face.indexImageBatch(entries);
-      }
-
-      debugPrint(
-        'ImageSearchService: Face indexing ${(i + batchSize).clamp(0, images.length)}/${images.length}',
-      );
-    }
-
-    face.finalizeClustering();
-    debugPrint(
-      'ImageSearchService: Face indexing complete — '
-      '${face.faceCount} faces, ${face.personCount} persons',
-    );
-  }
 
   // ========== Algorithm Preference ==========
 
   /// Whether the user preference is HNSW (`true`), IVF-PQ (`false`), or auto (`null`).
   bool? get preferHnsw => _annSearch.preferHnsw;
-
-  /// Force exact brute-force search regardless of index state.
-  /// Used by the alpha test screen to compare algorithms head-to-head.
-  void setForceBruteForce(bool force) {
-    _annSearch.forceBruteForceMode = force;
-  }
-
-  /// Snapshot of ANN index state for display in the alpha test screen.
-  Map<String, dynamic> get annIndexStatus => _annSearch.getIndexStats();
 
   // ========== Memory pressure / lifecycle ==========
 
@@ -261,27 +191,7 @@ class ImageSearchService {
     }
   }
 
-  // ========== ANN Tuning (Alpha Test) ==========
-
-  /// Adjust HNSW's runtime accuracy/speed knob. Higher ef → more accurate
-  /// per query, but slower. No-op if HNSW isn't loaded.
-  void setHnswEfSearch(int ef) => _annSearch.setHnswEfSearch(ef);
-
-  /// Rebuild the IVF-PQ index with caller-provided overrides on top of the
-  /// adaptive defaults. Slow path — re-runs k-means + PQ training.
-  Future<bool> retrainIvfpq({
-    int? numClusters,
-    int? numSubquantizers,
-    int? numProbes,
-    int? trainingIterations,
-  }) {
-    return _annSearch.retrainIvfpq(
-      numClusters: numClusters,
-      numSubquantizers: numSubquantizers,
-      numProbes: numProbes,
-      trainingIterations: trainingIterations,
-    );
-  }
+  // ========== ANN Tuning ==========
 
   /// Set the preferred search algorithm shown in Settings.
   ///
@@ -655,53 +565,6 @@ class ImageSearchService {
   /// Clear current search and reset to initial state
   void clearSearch() {
     _updateState(const SearchState());
-  }
-
-  /// Search for images containing a person with the given label.
-  ///
-  /// Delegates to [FaceService.searchByPersonLabel] and then loads
-  /// thumbnails for matching image IDs. No-op if face service is unavailable.
-  Future<void> searchByPerson(String label) async {
-    final face = _faceService;
-    if (face == null || !face.isAvailable) return;
-
-    _updateState(SearchState(
-      status: SearchStatus.searching,
-      query: 'Person: $label',
-    ));
-
-    try {
-      final imageIds = face.searchByPersonLabel(label);
-
-      final images = imageIds
-          .map((id) => getImageById(id))
-          .whereType<ImageItem>()
-          .toList();
-
-      if (images.isEmpty) {
-        _updateState(SearchState(
-          status: SearchStatus.noResults,
-          query: 'Person: $label',
-          result: const SearchResult(images: [], scores: [], query: ''),
-        ));
-      } else {
-        _updateState(SearchState(
-          status: SearchStatus.success,
-          query: 'Person: $label',
-          result: SearchResult(
-            images: images,
-            scores: List.filled(images.length, 1.0),
-            query: 'Person: $label',
-          ),
-        ));
-      }
-    } catch (e) {
-      _updateState(SearchState(
-        status: SearchStatus.error,
-        query: 'Person: $label',
-        error: e.toString(),
-      ));
-    }
   }
 
   /// Search for similar images using an image query (image-to-image search)

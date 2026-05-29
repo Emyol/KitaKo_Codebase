@@ -97,9 +97,12 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/models/
+    # NOTE: the ONNX models (image encoder + text encoder) are NOT bundled here.
+    # They live in the install-time Play Asset Delivery pack at
+    # android/models_pack/src/main/assets/models/ and are extracted on first
+    # launch (see ModelDownloadService.extractBundledModels). Bundling them here
+    # would put ~660 MB in the base module and exceed Play's ~200 MB cap.
     - assets/models/tokenizer/
-    - assets/models/face/
     - assets/images/
 
   # To add assets to your application, add an assets section, like this:

@@ -11,7 +11,6 @@ import 'src/ui/screens/eula_screen.dart';
 import 'src/ui/screens/permission_screen.dart';
 import 'src/ui/theme/theme_notifier.dart';
 import 'src/ui/theme/palette.dart';
-import 'src/services/face_service.dart';
 import 'src/services/image_search_service.dart';
 import 'src/services/model_download_service.dart';
 import 'src/state/settings_controller.dart';
@@ -93,30 +92,13 @@ class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
   late final ThemeNotifier _themeNotifier = widget.themeNotifier;
   late final SettingsController _settingsController = widget.settingsController;
 
-  /// Face service — optional, gracefully disabled if models not present.
-  final FaceService _faceService = FaceService();
   late final ImageSearchService _searchService;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _searchService = ImageSearchService(faceService: _faceService);
-    // Defer face init until the search service finishes its embedding pass.
-    // Loading face ONNX sessions concurrently with the SigLIP embedding loop
-    // (each image decode ~48 MB + the model itself ~625 MB) causes OOM.
-    // We listen for the first terminal phase (ready or error) and only then
-    // start the face pipeline, when the heavy buffers have been released.
-    _searchService.indexingProgressStream
-        .firstWhere((p) =>
-            p.phase == IndexingPhase.ready ||
-            p.phase == IndexingPhase.error)
-        .then((_) async {
-          // Load face models so they're ready when the user opens People.
-          // Indexing itself is user-initiated from the People screen.
-          await _faceService.tryAutoInitialize();
-        })
-        .ignore();
+    _searchService = ImageSearchService();
   }
 
   @override
@@ -124,7 +106,6 @@ class _KitaKoAppState extends State<KitaKoApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _themeNotifier.dispose();
     _settingsController.dispose();
-    _faceService.dispose();
     _searchService.dispose();
     super.dispose();
   }

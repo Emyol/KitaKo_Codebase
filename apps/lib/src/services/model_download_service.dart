@@ -107,31 +107,47 @@ class ModelDownloadService {
     }
   }
 
-  /// Extracts bundled ONNX model assets to the app documents directory.
+  /// Native bridge to copy model files out of the install-time asset pack.
+  /// Implemented in MainActivity (`com.kitako.app`); Android only.
+  static const MethodChannel _modelsChannel =
+      MethodChannel('kitako_app/models');
+
+  /// Extracts the ONNX models from the install-time asset pack into the app
+  /// documents directory.
+  ///
+  /// The models ship in the `:models_pack` Play Asset Delivery pack (delivery
+  /// type install-time), not as Flutter assets — bundling ~660 MB in the base
+  /// module would exceed Play's ~200 MB cap. install-time packs are fused into
+  /// the Android AssetManager, so the native side streams each file out via
+  /// `assets.open(...)` directly to a destination path (the big files never
+  /// cross the method channel).
   ///
   /// Call this once at startup before loading any models. It is safe to call
   /// on every launch — files that already exist in the documents directory are
   /// skipped, so extraction only happens on the first install.
   ///
-  /// [onProgress] is called after each file is written with the file name and
+  /// [onProgress] is called after each file is handled with the file name and
   /// the index (1-based) out of the total count, so callers can show progress.
   Future<void> extractBundledModels({
     void Function(String filename, int done, int total)? onProgress,
   }) async {
+    // Asset packs are an Android delivery mechanism. On other platforms the
+    // models are resolved directly from the workspace `models/` dir instead
+    // (see [_resolvePath]), so there is nothing to extract.
+    if (!Platform.isAndroid) return;
+
     final docDir = await _getDocDir();
 
-    // asset path → destination filename
-    const bundled = <String, String>{
-      'assets/models/kitako_image_encoder_fp32.onnx':
-          'kitako_image_encoder_fp32.onnx',
-      'assets/models/kitako_text_encoder_int8.onnx':
-          'kitako_text_encoder_int8.onnx',
+    // asset-pack asset path → destination filename
+    const packAssets = <String, String>{
+      'models/kitako_image_encoder_fp32.onnx': 'kitako_image_encoder_fp32.onnx',
+      'models/kitako_text_encoder_int8.onnx': 'kitako_text_encoder_int8.onnx',
     };
 
     int done = 0;
-    final total = bundled.length;
+    final total = packAssets.length;
 
-    for (final entry in bundled.entries) {
+    for (final entry in packAssets.entries) {
       final dest = File('${docDir.path}/${entry.value}');
       if (await dest.exists()) {
         done++;
@@ -141,18 +157,18 @@ class ModelDownloadService {
         continue;
       }
 
-      debugPrint('ModelDownloadService: extracting ${entry.value}…');
+      debugPrint('ModelDownloadService: extracting ${entry.value} from asset pack…');
       try {
-        final data = await rootBundle.load(entry.key);
-        await dest.writeAsBytes(
-          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-          flush: true,
-        );
+        await _modelsChannel.invokeMethod<bool>('copyAsset', {
+          'assetPath': entry.key,
+          'destPath': dest.path,
+        });
         done++;
         onProgress?.call(entry.value, done, total);
+        final size = await dest.length();
         debugPrint(
             'ModelDownloadService: extracted ${entry.value} '
-            '(${(data.lengthInBytes / 1024 / 1024).toStringAsFixed(0)} MB)');
+            '(${(size / 1024 / 1024).toStringAsFixed(0)} MB)');
       } catch (e) {
         debugPrint(
             'ModelDownloadService: failed to extract ${entry.value}: $e');

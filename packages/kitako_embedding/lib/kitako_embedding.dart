@@ -13,6 +13,3 @@ export 'src/gemma_tokenizer.dart';
 export 'src/onnx_embedding_service.dart';
 export 'src/onnx_siglip_inference.dart';
 export 'src/siglip_model_config.dart';
-
-// Face recognition pipeline (optional — gracefully degrades if models missing)
-export 'src/face/face.dart';
