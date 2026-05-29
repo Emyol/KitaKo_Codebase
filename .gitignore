@@ -42,6 +42,9 @@ pubspec.lock
 # See docs/development/TEST_DATASETS.md for setup.
 /test_datasets/
 
+# Release artifacts (large APK/AAB/QR — distributed via SourceForge, not git)
+/dist/
+
 # Large model/asset files
 assets/models/*.onnx
 assets/models/onnx/

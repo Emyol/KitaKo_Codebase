@@ -127,19 +127,16 @@ If LFS is not installed: `git lfs install` first, then `git lfs pull`.
 > `.gitignore` but were force-added via LFS before the ignore rule was written.
 > They ARE committed — `git lfs ls-files` confirms them. Do not re-add or re-ignore.
 
-### Android model push (large FP32 models)
-The `models/` FP32 models are too large to bundle as Flutter assets.
-They are pushed to the device's `/data/local/tmp/` via a Gradle task that runs
-automatically on every `flutter run`:
-
-```bash
-# Manual push if needed:
-cd apps
-./gradlew pushOnnxModels
-```
-
-The app's `ModelDownloadService.copyModelsFromTmp()` copies them to the app's
-private storage on first launch.
+### Model delivery (production vs. dev)
+- **Production (Play / packaged builds):** the two ONNX models now live in an
+  **install-time Play Asset Delivery pack** at
+  `apps/android/models_pack/src/main/assets/models/`, NOT in Flutter assets.
+  See Section 7 for the full architecture. They are **not** in `apps/assets/models/`
+  anymore (only the tokenizer remains there).
+- **Dev (`flutter run`):** the `models/` files can still be ADB-pushed to
+  `/data/local/tmp/` via `./gradlew pushOnnxModels` (run manually — the
+  auto-push hook on `install*` was **removed** 2026-05-29). `ModelDownloadService`
+  resolves from the app docs dir first, then `/data/local/tmp/`, then `<cwd>/models/`.
 
 ---
 
@@ -212,7 +209,10 @@ cd ../kitako_normalizer        && dart pub get
 
 # 5. Android: verify a device is connected, then run
 cd ../../apps
-flutter run   # Gradle will auto-run pushOnnxModels
+flutter run
+# NOTE: models are no longer auto-pushed. For dev, push them once manually:
+#   cd android && ./gradlew pushOnnxModels   (copies models/ → /data/local/tmp/)
+# Packaged/release builds get models from the install-time asset pack (Section 7).
 ```
 
 ### Verify models arrived on device
@@ -244,3 +244,88 @@ Open the app → Settings → scroll to "Model Info". Both models
    validated against the Python reference in `external_test/query.py`.
 6. **ONNX output tensor names** — `image_embeds` / `text_embeds`. If you export
    a new model, verify these names before swapping.
+7. **Fully offline** — the app makes no runtime network calls and never
+   downloads models (see Section 7). Don't add network model fetching;
+   `query_assist_service` is an on-device dictionary, not a remote LLM.
+
+---
+
+## 7. Deployment (Google Play & alternatives)
+
+Validated on-device 2026-05-29 (Samsung SM S9260, Android 16). The Flutter
+project root is **`apps/`** (`apps/kitako_app/` is a stale build dir).
+
+### App identity & signing
+- **Application ID: `com.kitako.app`** — set as both `namespace` and
+  `applicationId` in `apps/android/app/build.gradle.kts`; `MainActivity.kt` is in
+  package `com.kitako.app`. **PERMANENT once published — never change it.**
+- **Upload keystore:** `C:/Users/ricba/kitako-upload.jks` (alias `kitako`,
+  PKCS12, valid to 2053, cert CN=KitaKo). Credentials in
+  `apps/android/key.properties` (**gitignored**). Gradle auto-detects
+  `key.properties` and signs release with it; falls back to the debug key if
+  absent (so fresh clones/CI still build). **Back up the `.jks` + password.**
+
+### Model delivery — install-time asset pack (Play size cap workaround)
+The base AAB module is capped at ~200 MB download by Play; the FP32 image
+encoder alone (~355 MB) exceeds that. So the two big models ship in an
+**install-time Play Asset Delivery pack**:
+- Module `:models_pack` — `apps/android/models_pack/` (`build.gradle.kts` with
+  `deliveryType = install-time`), registered in `settings.gradle.kts` and via
+  `assetPacks += listOf(":models_pack")` in the app gradle.
+- Models: `apps/android/models_pack/src/main/assets/models/{kitako_image_encoder_fp32.onnx,kitako_text_encoder_int8.onnx}`.
+- **First-launch extraction:** `MainActivity` exposes a `kitako_app/models`
+  MethodChannel (`copyAsset` streams a pack asset via `AssetManager.open(...)` to
+  a dest path). `ModelDownloadService.extractBundledModels()` (Android-only)
+  copies models into the app docs dir, where `_resolvePath()` finds them first.
+- install-time packs arrive **with the install** (present at first launch, no
+  runtime network) — keeps the app fully offline (invariant #7). The tokenizer
+  (~37 MB) stays a normal Flutter asset.
+
+> Real model sizes (LFS): image FP32 ~355 MB, text INT8 ~273 MB — far larger
+> than the old Section 3 table claimed. The "INT8" text encoder being ~273 MB is
+> suspicious (FP32 text is ~90 MB) and may be mislabeled/non-quantized — worth
+> verifying if download size matters.
+
+### Build commands
+```bash
+cd apps
+# Play upload artifact (signed AAB):
+flutter build appbundle --release
+#   → build/app/outputs/bundle/release/app-release.aab
+
+# Sideload / non-Play self-contained APK (models baked in) — built from the AAB
+# because a plain `flutter build apk` no longer includes the asset-pack models:
+java -jar ../tools/bin/bundletool.jar build-apks \
+  --bundle=build/app/outputs/bundle/release/app-release.aab \
+  --mode=universal --output=app-universal.apks
+```
+
+### Local validation of the asset pack (before a Play round-trip)
+`bundletool` jar at `tools/bin/bundletool.jar`. On Windows pass explicit
+`--adb=`. `build-apks --connected-device --local-testing` then `install-apks`
+reproduces Play's install-time delivery; confirm logs show
+`ModelDownloadService: extracting … from asset pack` on a fresh install with an
+empty `/data/local/tmp`.
+
+### Publishing
+- **Google Play** ($25 one-time, lifetime): create app → Play App Signing →
+  internal testing → upload `app-release.aab` → Data Safety (all on-device, no
+  data collected) + privacy policy URL + listing → promote to production.
+- **Free alternatives** (distribute the universal APK): Amazon Appstore ($0),
+  Samsung Galaxy Store ($0), GitHub Releases + IzzyOnDroid ($0), direct APK.
+
+### Release artifacts & distribution
+- Built artifacts live in **`dist/`** (`app-release.aab`, `KitaKo-v1.0.0.apk`,
+  and the QR PNGs). **`dist/` is gitignored** — the large APK/AAB are distributed
+  out-of-band (SourceForge), not committed to git.
+- **QR codes:** `dist/kitako-download-qr.png` (APK download) and
+  `dist/kitako-project-qr.png` (GitHub repo). Because `dist/` is ignored, copies
+  for the README live in the tracked **`docs/images/`** dir and are embedded in
+  the root `README.md` "Get KitaKo" section (just above "Repository Structure").
+  If a QR's target URL changes, regenerate the PNG in `dist/` AND refresh the
+  `docs/images/` copy so the README renders the current code.
+
+### Known follow-ups (not blockers)
+- First-launch full-gallery indexing is slow (~6688 imgs @ ~700 ms ≈ 75 min).
+- Deployment work lives on the **`deployment`** branch (kept off `master`, which
+  is the clean baseline). Commit deployment changes there, not on `master`.

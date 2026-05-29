@@ -126,9 +126,8 @@ tasks.register("pushOnnxModels") {
     }
 }
 
-// Hook into the install task so models are pushed automatically on `flutter run`
-tasks.configureEach {
-    if (name.startsWith("install")) {
-        finalizedBy("pushOnnxModels")
-    }
-}
+// NOTE: the auto-push hook was removed. Production models now ship in the
+// `:models_pack` install-time asset pack, so `/data/local/tmp` is no longer
+// part of the model pipeline. The `pushOnnxModels` task above is kept for
+// manual desktop/dev use only (`./gradlew pushOnnxModels`); it no longer runs
+// automatically on `flutter run`.
