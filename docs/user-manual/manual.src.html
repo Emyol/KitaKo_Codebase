@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KitaKo User Manual · v1.0.0</title>
+<style>
+@font-face{font-family:"Roboto";src:url(assets/fonts/Roboto.woff2) format("woff2");font-weight:100 900;font-display:block}
+@font-face{font-family:"Material Symbols Rounded";src:url(assets/fonts/MaterialSymbolsRounded.woff2) format("woff2");font-weight:100 700;font-display:block}
+
+/* ── KitaKo tokens (see /DESIGN.md) ─────────────────────────── */
+:root{
+  --cobalt:#2563EB; --cobalt-deep:#1D4ED8; --mist:#DBEAFE; --navy:#0B2545;
+  --bg:#F4F7FB; --surface:#fff; --tile:#E2EAF4; --high:#EEF3FA; --border:#E2E8F0;
+  --ink:#0F172A; --dim:#475569; --more:#64748B; --faint:#94A3B8;
+  --hair:rgba(37,99,235,.10); --amber:#D97706; --red:#DC2626; --green:#059669;
+  --shadow-pill:0 12px 32px rgba(15,42,74,.10),0 2px 4px rgba(15,42,74,.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:#E8EEF6}
+body{font-family:"Roboto",system-ui,sans-serif;color:var(--ink);font-size:10.5pt;line-height:1.6;-webkit-font-smoothing:antialiased}
+.ms{font-family:"Material Symbols Rounded";font-weight:400;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;font-feature-settings:"liga";-webkit-font-feature-settings:"liga";font-variation-settings:"FILL" 0,"wght" 400,"GRAD" 0,"opsz" 24;vertical-align:middle}
+.ms.f{font-variation-settings:"FILL" 1,"wght" 400,"GRAD" 0,"opsz" 24}
+
+/* ── Pages ───────────────────────────────────────────────────── */
+@page{size:A4;margin:0}
+.page{width:210mm;min-height:297mm;margin:10mm auto;background:var(--bg);padding:18mm 18mm 20mm;position:relative;box-shadow:0 4px 24px rgba(15,42,74,.10);page-break-after:always;break-after:page;overflow:hidden}
+.page{counter-increment:pg}
+.runner span:last-child::after{content:counter(pg)}
+.page:last-child{page-break-after:auto;break-after:auto}
+@media print{html{background:none}.page{margin:0;box-shadow:none;height:297mm}}
+.runner{position:absolute;left:18mm;right:18mm;bottom:9mm;display:flex;justify-content:space-between;font-size:8pt;color:var(--faint);letter-spacing:.3px}
+.runner b{color:var(--cobalt);font-weight:700}
+
+/* ── Type ────────────────────────────────────────────────────── */
+.label{display:flex;align-items:center;gap:8px;font-size:8.5pt;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+.label::before{content:"";width:3px;height:13px;border-radius:2px;background:var(--cobalt)}
+h1{font-size:26pt;font-weight:700;letter-spacing:-.6px;color:var(--navy);line-height:1.1}
+h2{font-size:19pt;font-weight:700;letter-spacing:-.4px;color:var(--navy);line-height:1.15;margin-bottom:10px}
+h3{font-size:12pt;font-weight:600;color:var(--ink);margin:18px 0 6px}
+p{margin:0 0 9px;color:var(--dim);max-width:74ch}
+p strong,li strong{color:var(--ink);font-weight:600}
+ul,ol{margin:0 0 10px 18px;color:var(--dim)}
+li{margin-bottom:4px;padding-left:2px}
+.lede{font-size:11.5pt;color:var(--dim);max-width:62ch}
+.k{display:inline-flex;align-items:center;gap:3px;padding:0 8px;height:19px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-size:8.5pt;font-weight:600;color:var(--ink);vertical-align:1px;white-space:nowrap}
+.k .ms{font-size:12px;color:var(--cobalt)}
+.q{font-weight:500;color:var(--cobalt-deep);background:var(--mist);border-radius:6px;padding:0 5px;white-space:nowrap}
+
+/* ── Doc components ──────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px 16px;box-shadow:0 1px 3px rgba(15,42,74,.04)}
+.note{display:flex;gap:10px;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--cobalt);border-radius:12px;padding:10px 14px;margin:10px 0;font-size:9.5pt;color:var(--dim)}
+.note .ms{color:var(--cobalt);font-size:18px;margin-top:1px}
+.note.warn{border-left-color:var(--amber)}.note.warn .ms{color:var(--amber)}
+.note p{margin:0}
+.steps{list-style:none;margin:8px 0 12px;padding:0;counter-reset:s}
+.steps li{counter-increment:s;position:relative;padding-left:34px;margin-bottom:9px;color:var(--dim)}
+.steps li::before{content:counter(s);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;background:var(--cobalt);color:#fff;font-size:9pt;font-weight:700;display:grid;place-items:center;line-height:1}
+.split{display:grid;grid-template-columns:auto 1fr;gap:12mm;align-items:start;margin-top:6px}
+.split.r{grid-template-columns:1fr auto}
+figure{break-inside:avoid}
+figcaption{font-size:8pt;color:var(--more);margin-top:8px;text-align:center;max-width:282px}
+figcaption b{color:var(--ink);font-weight:600}
+.legend{list-style:none;margin:6px 0 0;padding:0}
+.legend li{display:grid;grid-template-columns:22px 1fr;gap:8px;margin-bottom:8px;font-size:9.5pt}
+.legend li i{font-style:normal;width:20px;height:20px;border-radius:50%;background:var(--cobalt);color:#fff;font-size:8.5pt;font-weight:700;display:grid;place-items:center;margin-top:1px}
+.legend li b{color:var(--ink);font-weight:600}
+table{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;font-size:9.3pt;margin:8px 0 12px}
+th{background:var(--high);text-align:left;font-size:8pt;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);padding:8px 12px}
+td{padding:8px 12px;border-top:1px solid var(--border);color:var(--dim);vertical-align:top}
+td:first-child{color:var(--ink);font-weight:500}
+table.tight{font-size:8.9pt;line-height:1.5}table.tight td{padding:6px 12px}table.tight th{padding:6px 12px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* ── Phone mockup (390×844 canvas scaled to 0.72) ──────────── */
+.phone-wrap{width:296px;height:624px;flex:none;position:relative}
+.phone{width:410px;height:866px;transform:scale(.72);transform-origin:top left;border-radius:54px;background:#0F172A;padding:10px;box-shadow:0 30px 60px rgba(15,42,74,.18)}
+.scr{width:390px;height:846px;border-radius:44px;overflow:hidden;background:var(--bg);position:relative;font-family:"Roboto",system-ui,sans-serif;color:var(--ink);font-size:14px;line-height:1.35}
+.sb{height:40px;display:flex;align-items:center;justify-content:space-between;padding:6px 28px 0;font-size:13px;font-weight:600}
+.sb .ms{font-size:16px;margin-left:3px}
+.ab{height:56px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--hair);margin:0 0 0}
+.ab .t{font-size:22px;font-weight:700;letter-spacing:-.4px;color:var(--navy);flex:1}
+.ab .ms{font-size:24px;color:var(--navy)}
+.beta{font-size:10px;font-weight:600;color:var(--cobalt-deep);background:var(--mist);padding:3px 8px;border-radius:999px;letter-spacing:.4px;margin-left:6px;vertical-align:4px}
+.grp{display:flex;align-items:baseline;gap:8px;padding:14px 12px 8px;font-size:12px;font-weight:700;letter-spacing:.8px;color:var(--dim);text-transform:uppercase}
+.grp span{font-weight:500;letter-spacing:0;color:var(--faint);text-transform:none}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 10px}
+.grid.c4{grid-template-columns:repeat(4,1fr)}
+.tile{aspect-ratio:1;border-radius:14px;background:var(--tile) center/cover no-repeat;position:relative;overflow:hidden}
+.pill{position:absolute;left:16px;right:16px;bottom:26px;height:56px;border-radius:28px;background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow-pill);display:flex;align-items:center;gap:10px;padding:0 8px}
+.sc{width:36px;height:36px;border-radius:50%;background:var(--cobalt);display:grid;place-items:center;color:#fff;flex:none}
+.sc .ms{font-size:20px}
+.ph{flex:1;font-size:15px;color:var(--faint)}
+.chip{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 12px;border-radius:999px;background:var(--mist);color:var(--cobalt-deep);font-size:12px;font-weight:600;flex:none}
+.chip .ms{font-size:15px}
+.co{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--cobalt);color:#fff;font-size:11px;font-style:normal;font-weight:700;display:grid;place-items:center;z-index:6;box-shadow:0 0 0 2.5px #fff;line-height:1}
+.co-svg{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:5}
+.mk{position:absolute;width:30px;height:30px;border-radius:50%;background:var(--cobalt);color:#fff;font-size:15px;font-weight:700;display:grid;place-items:center;box-shadow:0 0 0 4px #fff,0 6px 14px rgba(15,42,74,.25);z-index:9}
+.mk.a{background:#F59E0B}
+.sl{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.6px;color:var(--dim);text-transform:uppercase;padding:0 16px;margin:18px 0 10px}
+.sl::before{content:"";width:3px;height:14px;border-radius:2px;background:var(--cobalt)}
+.sl em{margin-left:auto;font-style:normal;text-transform:none;letter-spacing:0;font-weight:600;color:var(--cobalt);font-size:12px}
+.sugg{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px}
+.sugg span{height:36px;padding:0 14px;display:inline-flex;align-items:center;gap:6px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-size:13px;font-weight:500}
+.sugg .ms{font-size:14px;color:var(--cobalt)}
+.list{margin:0 16px;background:var(--surface);border:1px solid var(--border);border-radius:16px}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--hair)}
+.row:first-child{border-top:0}
+.ib{width:32px;height:32px;border-radius:50%;background:var(--mist);color:var(--cobalt);display:grid;place-items:center;flex:none}
+.ib .ms{font-size:17px}
+.row .tx{flex:1;font-size:14px;font-weight:500}
+.row .tx small{display:block;font-size:12px;font-weight:400;color:var(--more);margin-top:2px}
+.row > .ms{font-size:18px;color:var(--faint)}
+.sbar{position:absolute;left:16px;right:16px;bottom:26px;display:flex;gap:10px;align-items:center}
+.field{flex:1;height:56px;border-radius:28px;background:var(--surface);border:1.5px solid var(--cobalt);box-shadow:0 0 0 4px rgba(37,99,235,.35);display:flex;align-items:center;gap:8px;padding:0 8px 0 16px}
+.field .ms{color:var(--cobalt);font-size:20px}
+.field .v{flex:1;font-size:15px;font-weight:500}
+.field .v.h{color:var(--faint);font-weight:400}
+.send{width:56px;height:56px;border-radius:50%;background:var(--cobalt);color:#fff;display:grid;place-items:center;flex:none;box-shadow:0 8px 20px rgba(37,99,235,.35)}
+.send .ms{font-size:24px}
+.qh{margin:12px 12px 10px;background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:0 4px 12px rgba(15,42,74,.06);display:flex;align-items:center;gap:12px;padding:12px 14px}
+.qh .ib{width:34px;height:34px}
+.qh b{display:block;font-size:15px;font-weight:600}
+.qh small{font-size:11px;color:var(--more)}
+.rb{position:absolute;left:6px;top:6px;height:20px;padding:0 8px;border-radius:999px;background:var(--cobalt);color:#fff;font-size:10px;font-weight:700;letter-spacing:.2px;display:flex;align-items:center;gap:3px}
+.rb .ms{font-size:12px}
+.meter{position:absolute;right:6px;bottom:6px;background:rgba(15,23,42,.78);border-radius:6px;padding:4px 5px;display:flex;align-items:flex-end;gap:2px;height:20px}
+.meter i{width:3px;border-radius:1px;background:rgba(255,255,255,.3)}
+.meter i:nth-child(1){height:6px}.meter i:nth-child(2){height:9px}.meter i:nth-child(3){height:12px}
+.meter i.on{background:#60A5FA}
+.dim{position:absolute;inset:0;background:rgba(15,23,42,.45)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:24px 24px 0 0;padding:10px 20px 28px;z-index:5}
+.grab{width:40px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 16px}
+.btn{height:48px;border-radius:999px;background:var(--cobalt);color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;font-size:15px;font-weight:600}
+.btn.o{background:transparent;color:var(--dim);font-weight:500}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.seg span{height:36px;border-radius:10px;border:1.5px solid var(--border);display:grid;place-items:center;font-size:13px;font-weight:600;background:var(--high)}
+.seg span.on{background:var(--cobalt);border-color:var(--cobalt);color:#fff}
+.datep{display:flex;gap:10px}
+.datep span{flex:1;height:44px;border-radius:12px;border:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 12px;font-size:13px;color:var(--more)}
+.datep .ms{font-size:16px;color:var(--cobalt)}
+.choice{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.choice div{border:1.5px solid var(--border);border-radius:12px;padding:10px 12px;font-size:13px;font-weight:600}
+.choice div.on{border-color:var(--cobalt);background:rgba(37,99,235,.04)}
+.choice small{display:block;font-size:11px;font-weight:400;color:var(--more);margin-top:2px}
+.choice .ms{font-size:16px;color:var(--cobalt);float:right}
+.cols{display:flex;gap:5px}
+.cols span{width:30px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:600;background:var(--high);border:1.5px solid var(--border)}
+.cols span.on{background:var(--cobalt);color:#fff;border-color:var(--cobalt)}
+.tog{width:40px;height:24px;border-radius:12px;background:var(--border);position:relative;flex:none}
+.tog::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.ready{font-size:11px;font-weight:600;color:var(--green);background:rgba(16,185,129,.12);padding:4px 9px;border-radius:999px}
+.danger{font-size:12px;font-weight:600;color:var(--red);display:flex;align-items:center;gap:3px}
+.danger .ms{font-size:15px}
+
+/* Cover */
+.cover{background:var(--bg);display:flex;flex-direction:column;padding:22mm 20mm}
+.cover .waves{position:absolute;left:0;right:0;bottom:0;height:46%}
+.cover .logo{width:30mm;height:30mm;border-radius:7mm;box-shadow:0 20px 40px rgba(17,86,205,.25)}
+.cover h1{font-size:44pt;letter-spacing:-1.4px;margin-top:14mm}
+.cover .sub{font-size:15pt;color:var(--dim);margin-top:4mm;max-width:24ch;line-height:1.35}
+.meta{display:flex;gap:8px;margin-top:9mm;flex-wrap:wrap}
+.meta span{height:26px;padding:0 12px;border-radius:999px;background:var(--surface);border:1px solid var(--border);display:inline-flex;align-items:center;gap:6px;font-size:9pt;font-weight:600;color:var(--ink)}
+.meta span.b{background:var(--mist);border-color:transparent;color:var(--cobalt-deep)}
+.cover .foot{position:absolute;left:20mm;right:20mm;bottom:14mm;color:#fff;font-size:9pt;display:flex;justify-content:space-between;z-index:2;opacity:.9}
+
+/* TOC */
+.toc{list-style:none;margin:6mm 0 0;padding:0}
+.toc li{display:grid;grid-template-columns:28px 1fr auto;align-items:baseline;gap:10px;padding:9px 0;border-bottom:1px solid var(--hair);color:var(--ink);font-size:11pt;font-weight:500;margin:0}
+.toc li i{font-style:normal;color:var(--cobalt);font-weight:700;font-size:10pt}
+.toc li small{display:block;color:var(--more);font-weight:400;font-size:9pt}
+.toc li b{color:var(--faint);font-weight:500;font-size:9.5pt}
+.credits{font-size:7.4pt;color:var(--more);columns:2;column-gap:8mm;line-height:1.45}
+.credits div{break-inside:avoid;margin-bottom:3px}
+.credits b{color:var(--ink);font-weight:500}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ COVER ═══════════════ -->
+<section class="page cover">
+  <img class="logo" src="assets/logo.svg" alt="KitaKo logo">
+  <div class="label" style="margin-top:14mm">User Manual · Version 1.0.0</div>
+  <h1 style="margin-top:2mm">KitaKo</h1>
+  <p class="sub">Search your photos the way you talk, in English, Tagalog, or Taglish.</p>
+  <div class="meta">
+    <span class="b"><span class="ms">lock</span> Runs fully on-device</span>
+    <span><span class="ms">translate</span> Taglish-aware</span>
+    <span><span class="ms">android</span> Android</span>
+  </div>
+  <svg class="waves" viewBox="0 0 800 520" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 160 C 160 90 300 220 470 150 S 700 80 800 130 V520 H0Z" fill="#7BABFF" opacity=".55"/>
+    <path d="M0 230 C 180 160 330 300 500 220 S 720 170 800 210 V520 H0Z" fill="#387DF4" opacity=".8"/>
+    <path d="M0 310 C 200 250 360 380 540 300 S 730 260 800 290 V520 H0Z" fill="#1156CD"/>
+    <path d="M0 400 C 220 350 380 460 560 390 S 740 360 800 380 V520 H0Z" fill="#0B2545"/>
+  </svg>
+  <div class="foot"><span>Stochastic4 · FEU Institute of Technology</span><span>November 2026</span></div>
+</section>
+
+<!-- ═══════════════ CONTENTS ═══════════════ -->
+<section class="page">
+  <div class="label">Contents</div>
+  <h2>What's inside</h2>
+  <ol class="toc">
+    <li><i>01</i><span>Meet KitaKo<small>What it does, and what stays on your phone</small></span><b>3</b></li>
+    <li><i>02</i><span>Before you install<small>Requirements, download, installation</small></span><b>4</b></li>
+    <li><i>03</i><span>First launch<small>Permissions, license agreement, preparing your library</small></span><b>5</b></li>
+    <li><i>04</i><span>Your gallery<small>Browsing, resizing the grid, opening photos</small></span><b>7</b></li>
+    <li><i>05</i><span>Searching with words<small>Taglish queries, suggestions, recent searches</small></span><b>8</b></li>
+    <li><i>06</i><span>Searching with a photo<small>Find look-alikes from your gallery or camera</small></span><b>9</b></li>
+    <li><i>07</i><span>Reading your results<small>Ranks, match strength, filters</small></span><b>10</b></li>
+    <li><i>08</i><span>Viewing a photo<small>Details, browsing, Find Similar</small></span><b>11</b></li>
+    <li><i>09</i><span>Settings<small>Appearance, search mode, storage, models</small></span><b>12</b></li>
+    <li><i>10</i><span>Troubleshooting &amp; FAQ</span><b>14</b></li>
+    <li><i>11</i><span>Privacy at a glance · Quick reference</span><b>15</b></li>
+  </ol>
+  <div class="note" style="margin-top:9mm"><span class="ms">info</span><p><strong>About the screen illustrations.</strong> The screens in this manual are faithful redrawings of KitaKo 1.0.0 in its default light theme, built from the app's own layout and colours. Your photos, dates and counts will differ. Numbered markers <span style="display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;background:var(--cobalt);color:#fff;font-size:8pt;font-weight:700;vertical-align:-2px">1</span> sit beside each screen with a line pointing to the exact element, and match the numbered notes next to it.</p></div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 01 + 02 ═══════════════ -->
+<section class="page">
+  <div class="label">01 · Meet KitaKo</div>
+  <h2>A camera roll you can talk to</h2>
+  <p class="lede">Most gallery apps make you scroll. With KitaKo, you just describe the photo, the way you'd describe it to a friend: <span class="q">sunset sa beach</span>, <span class="q">aso ko sa bahay</span>, <span class="q">group photo ng barkada</span>. KitaKo finds the matches by meaning, not by file names or tags.</p>
+  <div class="two" style="margin:12px 0 4px">
+    <div class="card"><div class="ib" style="margin-bottom:8px"><span class="ms">translate</span></div><strong style="font-size:10.5pt">Understands Taglish</strong><p style="margin:4px 0 0;font-size:9.5pt">Mixed Tagalog–English, texting shortcuts like <span class="q">d p</span> or <span class="q">kc</span>, and everyday slang are cleaned up before the search runs.</p></div>
+    <div class="card"><div class="ib" style="margin-bottom:8px"><span class="ms">image_search</span></div><strong style="font-size:10.5pt">Search by photo</strong><p style="margin:4px 0 0;font-size:9.5pt">Pick a picture or take a new one, and KitaKo shows the photos in your gallery that look most like it.</p></div>
+    <div class="card"><div class="ib" style="margin-bottom:8px"><span class="ms">wifi_off</span></div><strong style="font-size:10.5pt">Works offline</strong><p style="margin:4px 0 0;font-size:9.5pt">All the AI runs on your phone. No account, no internet connection, no upload.</p></div>
+    <div class="card"><div class="ib" style="margin-bottom:8px"><span class="ms">lock</span></div><strong style="font-size:10.5pt">Your photos stay put</strong><p style="margin:4px 0 0;font-size:9.5pt">KitaKo never copies, moves or sends your photos. It keeps only a private search index on the device.</p></div>
+  </div>
+
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<section class="page">
+  <div class="label">02 · Before you install</div>
+  <h2>What you need</h2>
+  <table>
+    <tr><th style="width:34%">Item</th><th>Details</th></tr>
+    <tr><td>Phone</td><td>An Android phone. KitaKo 1.0.0 is distributed as an Android APK, and the app runs in portrait orientation only.</td></tr>
+    <tr><td>Free storage</td><td>About <strong>1.5&nbsp;GB</strong>. The app bundles its AI models (roughly 650&nbsp;MB) and unpacks them once on first launch.</td></tr>
+    <tr><td>Memory</td><td>4&nbsp;GB of RAM or more is recommended. The image model is large, and indexing a big gallery takes a lot of memory.</td></tr>
+    <tr><td>Internet</td><td>Only to download the APK. After installation, KitaKo works fully offline.</td></tr>
+  </table>
+
+  <div class="split r" style="grid-template-columns:1fr 46mm;gap:8mm">
+    <div>
+      <h3 style="margin-top:4px">Install the app</h3>
+      <ol class="steps">
+        <li>Scan the <strong>Download</strong> QR code with your phone's camera, then download the KitaKo APK.</li>
+        <li>Open the downloaded file. If Android asks, allow your browser or file manager to <strong>install unknown apps</strong>. You can switch this back off afterwards.</li>
+        <li>Tap <strong>Install</strong>, then <strong>Open</strong>.</li>
+      </ol>
+      <div class="note warn"><span class="ms">warning</span><p>Only install KitaKo from the official QR code or the project repository. APKs from other sources may have been modified.</p></div>
+    </div>
+    <div class="card" style="text-align:center;padding:12px">
+      <img src="assets/kitako-download-qr.png" alt="Download QR code" style="width:100%;border-radius:8px">
+      <strong style="font-size:9pt;display:block;margin-top:6px">Download the app</strong>
+      <span style="font-size:8pt;color:var(--more)">KitaKo v1.0.0 · Android APK</span>
+    </div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 03a permissions + EULA ═══════════════ -->
+<section class="page">
+  <div class="label">03 · First launch</div>
+  <h2>Getting set up</h2>
+  <p>The first launch takes you through three short screens, each shown only once: <strong>permissions</strong>, the <strong>license agreement</strong>, and <strong>preparing your library</strong>. After that, KitaKo opens straight to your gallery.</p>
+
+  <div class="split" style="margin-top:4mm">
+    <figure>
+      <div class="phone-wrap" data-side="r"><div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div style="padding:28px 24px 0">
+          <div class="sl" style="padding:0;margin:0 0 8px">Before you start</div>
+          <div style="font-size:26px;font-weight:700;color:var(--navy);letter-spacing:-.5px">App Permissions</div>
+          <p style="font-size:14px;color:var(--dim);margin:12px 0 22px">KitaKo needs the following permissions to work. Your photos never leave your device.</p>
+          <div class="list" style="margin:0">
+            <div class="row" data-c="perm-photos" style="align-items:flex-start;padding:16px"><div class="ib" style="width:40px;height:40px"><span class="ms">photo_library</span></div><div class="tx">Photos &amp; Storage <span style="font-size:10px;font-weight:700;color:var(--cobalt-deep);background:var(--mist);border-radius:999px;padding:2px 8px;margin-left:4px">Required</span><small>Required to index and search your photo library. KitaKo processes all images on-device.</small></div></div>
+            <div class="row" data-c="perm-cam" style="align-items:flex-start;padding:16px"><div class="ib" style="width:40px;height:40px"><span class="ms">photo_camera</span></div><div class="tx">Camera <span style="font-size:10px;font-weight:700;color:var(--more);background:var(--high);border-radius:999px;padding:2px 8px;margin-left:4px">Optional</span><small>Lets you search by taking a photo on the spot. Optional — you can still use the app without it.</small></div></div>
+          </div>
+          <div style="display:flex;gap:8px;font-size:12px;color:var(--more);margin-top:16px"><span class="ms" style="font-size:15px;color:var(--cobalt)">info</span>You can update these permissions at any time in your device settings.</div>
+        </div>
+        <div style="position:absolute;left:24px;right:24px;bottom:30px">
+          <div class="btn" data-c="perm-btn">Grant Permissions <span class="ms" style="font-size:17px">north_east</span></div>
+          <div class="btn o" style="margin-top:6px">Skip for now</div>
+        </div>
+      </div></div><i class="co" data-n="1" data-t="perm-photos">1</i><i class="co" data-n="2" data-t="perm-cam">2</i><i class="co" data-n="3" data-t="perm-btn">3</i></div>
+      <figcaption><b>Figure 1.</b> App Permissions screen</figcaption>
+    </figure>
+    <div>
+      <h3 style="margin-top:0">Step 1 · Allow access</h3>
+      <ul class="legend">
+        <li><i>1</i><span><b>Photos &amp; Storage (required).</b> Lets KitaKo read your gallery so it can build the search index. On newer Android versions this is the <em>Photos and videos</em> permission.</span></li>
+        <li><i>2</i><span><b>Camera (optional).</b> Only needed for <em>Take a Photo</em> searches. Everything else works without it.</span></li>
+        <li><i>3</i><span><b>Grant Permissions</b> opens Android's permission prompts. <b>Skip for now</b> continues without asking, but KitaKo can't search photos until you allow access in <em>Settings → Apps → KitaKo → Permissions</em>.</span></li>
+      </ul>
+      <h3>Step 2 · Accept the license</h3>
+      <p>Next comes the <strong>End User License Agreement</strong>. It explains in plain terms how KitaKo handles your data. Section&nbsp;3, <em>Privacy and Data Handling</em>, is the key part: everything is processed on the device, and nothing is collected or sent anywhere.</p>
+      <ol class="steps">
+        <li>Read through the agreement.</li>
+        <li>Tick <strong>I have read and agree to the Agreement.</strong></li>
+        <li>Tap <strong>Agree and continue</strong>. Choosing <strong>Decline and exit</strong> closes the app.</li>
+      </ol>
+    </div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 03b startup ═══════════════ -->
+<section class="page">
+  <div class="label">03 · First launch</div>
+  <h2>Preparing your library</h2>
+  <div class="split r" style="margin-top:2mm">
+    <div>
+      <p>Before KitaKo can search, it has to "look at" every photo once and save a compact description of each one, called an <strong>index</strong>. You'll see this progress screen while it works.</p>
+      <ul class="legend">
+        <li><i>1</i><span><b>Status message.</b> Shows what KitaKo is doing right now (see the table below).</span></li>
+        <li><i>2</i><span><b>Progress bar and percentage.</b> Moves forward as photos are processed.</span></li>
+      </ul>
+      <table>
+        <tr><th>You see</th><th>What it means</th></tr>
+        <tr><td>Preparing / Extracting models… <span style="color:var(--faint);font-weight:400">This only happens once.</span></td><td>The AI models are being unpacked onto your phone. Very first launch only.</td></tr>
+        <tr><td>Loading AI models…</td><td>The search models are starting up.</td></tr>
+        <tr><td>Scanning your gallery…</td><td>KitaKo is finding the photos on your device.</td></tr>
+        <tr><td>Organizing your photos · 120 / 840</td><td>Photos are being indexed. The numbers show progress.</td></tr>
+        <tr><td>Picking up where we left off…</td><td>The saved index is being reused, so only new photos need work.</td></tr>
+        <tr><td>Saving your photo index…</td><td>Progress is saved, so the next launch is fast.</td></tr>
+      </table>
+      <div class="note"><span class="ms">bolt</span><p><strong>You don't have to wait.</strong> KitaKo opens your gallery as soon as your photos are found, then keeps indexing in the background. A thin <em>Indexing photos…</em> bar on the Home screen shows that it's still working. Photos that aren't indexed yet won't appear in search results until they are.</p></div>
+
+    </div>
+    <figure>
+      <div class="phone-wrap" data-side="l"><div class="phone"><div class="scr" style="background:#fff">
+        <div class="sb"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div style="position:absolute;left:0;right:0;top:170px;display:flex;flex-direction:column;align-items:center">
+          <img src="assets/logo.svg" style="width:180px;height:180px;border-radius:40px;box-shadow:0 18px 40px rgba(17,86,205,.22)" alt="">
+          <div style="width:36px;height:36px;border-radius:50%;border:3.5px solid #DBEAFE;border-top-color:#1156CD;margin-top:56px"></div>
+          <div data-c="st-msg" style="font-size:13px;font-weight:500;color:var(--dim);margin-top:18px">Organizing your photos · 312 / 840</div>
+          <div data-c="st-bar" style="width:200px;height:4px;border-radius:2px;background:#EEF3FA;margin-top:14px;overflow:hidden"><div style="width:37%;height:100%;background:#1156CD;border-radius:2px"></div></div>
+          <div style="font-size:11px;font-weight:600;color:var(--cobalt-deep);margin-top:8px">37%</div>
+        </div>
+        <svg style="position:absolute;left:0;right:0;bottom:0;width:100%;height:230px" viewBox="0 0 390 230" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 60 C 80 20 150 100 230 60 S 340 30 390 50 V230 H0Z" fill="#7BABFF" opacity=".5"/>
+          <path d="M0 100 C 90 60 160 140 250 100 S 350 80 390 95 V230 H0Z" fill="#387DF4" opacity=".75"/>
+          <path d="M0 145 C 100 110 170 180 260 145 S 350 125 390 140 V230 H0Z" fill="#1156CD"/>
+          <path d="M0 190 C 110 160 180 220 270 190 S 360 175 390 185 V230 H0Z" fill="#0B2545"/>
+        </svg>
+      </div></div><i class="co" data-n="1" data-t="st-msg">1</i><i class="co" data-n="2" data-t="st-bar">2</i></div>
+      <figcaption><b>Figure 2.</b> Startup screen while indexing</figcaption>
+    </figure>
+  </div>
+  <div class="note warn" style="margin-top:6mm"><span class="ms">warning</span><p><strong>If setup is interrupted</strong>, for example by <em>No images found</em> or an amber <em>Retry / Skip</em> message, see Section 10, Troubleshooting.</p></div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 04 home ═══════════════ -->
+<section class="page">
+  <div class="label">04 · Your gallery</div>
+  <h2>The Home screen</h2>
+  <div class="split" style="margin-top:2mm">
+    <figure>
+      <div class="phone-wrap" data-side="r"><div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div class="ab"><div class="t">KitaKo<span class="beta">BETA</span></div><span class="ms" data-c="h-set">settings</span></div>
+        <div class="grp"><b data-c="h-grp" style="font-weight:inherit">Today</b> <span>6</span></div>
+        <div class="grid">
+          <div class="tile" style="background-image:url(assets/photos/beach_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/halohalo_0.jpg)"></div>
+          <div class="tile" data-c="h-tile" style="background-image:url(assets/photos/friends_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/sunset_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/dog_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/jeepney_0.jpg)"></div>
+        </div>
+        <div class="grp">This week <span>9</span></div>
+        <div class="grid">
+          <div class="tile" style="background-image:url(assets/photos/family_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/church_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/cat_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/mountains_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/market_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/birthday_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/banaue_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/lechon_0.jpg)"></div>
+          <div class="tile" style="background-image:url(assets/photos/concert_0.jpg)"></div>
+        </div>
+        <div style="position:absolute;left:0;right:0;bottom:0;height:120px;background:linear-gradient(transparent,var(--bg) 60%)"></div>
+        <div class="pill" data-c="h-pill"><div class="sc"><span class="ms">search</span></div><div class="ph">Search photos in Taglish…</div><div class="chip"><span class="ms">image</span>Photo</div></div>
+      </div></div><i class="co" data-n="1" data-t="h-grp" data-s="l">1</i><i class="co" data-n="2" data-t="h-set">2</i><i class="co" data-n="3" data-t="h-tile">3</i><i class="co" data-n="4" data-t="h-pill">4</i></div>
+      <figcaption><b>Figure 3.</b> Home, your gallery grouped by date</figcaption>
+    </figure>
+    <div>
+      <p>Home shows your whole photo library, newest first. It's where you start every search.</p>
+      <ul class="legend">
+        <li><i>1</i><span><b>Date groups.</b> Photos are grouped under <em>Today</em>, <em>This week</em>, <em>This month</em>, then by month (e.g. <em>October 2026</em>). Photos with no date go under <em>Earlier</em>. The number next to each heading is its photo count.</span></li>
+        <li><i>2</i><span><b>Settings</b> <span class="ms" style="font-size:15px;color:var(--navy)">settings</span>. Opens appearance, search and storage options (Section 09).</span></li>
+        <li><i>3</i><span><b>Photo tiles.</b> <strong>Tap</strong> a photo to open it. <strong>Press and hold</strong> a photo to jump straight to photos that look like it.</span></li>
+        <li><i>4</i><span><b>Search bar.</b> Tap anywhere on it to open Search. After your first search it shows your most recent query under a small <em>RECENT</em> label.</span></li>
+      </ul>
+      <h3>Make the grid bigger or smaller</h3>
+      <p><strong>Pinch</strong> on the gallery to change how many photos fit across the screen, from <strong>2</strong> (large) to <strong>6</strong> (small). KitaKo remembers your choice. You can also set it in <em>Settings → Appearance → Gallery columns</em>.</p>
+      <div style="display:flex;gap:10px;align-items:center;margin:4px 0 12px">
+        <div class="grid" style="grid-template-columns:repeat(2,1fr);gap:3px;padding:0;width:60px"><div class="tile" style="border-radius:5px;background-image:url(assets/photos/beach_1.jpg)"></div><div class="tile" style="border-radius:5px;background-image:url(assets/photos/cat_1.jpg)"></div></div>
+        <span class="ms" style="color:var(--faint)">pinch_zoom_out</span>
+        <div class="grid" style="grid-template-columns:repeat(5,1fr);gap:2px;padding:0;width:90px"><div class="tile" style="border-radius:3px;background-image:url(assets/photos/beach_1.jpg)"></div><div class="tile" style="border-radius:3px;background-image:url(assets/photos/cat_1.jpg)"></div><div class="tile" style="border-radius:3px;background-image:url(assets/photos/dog_1.jpg)"></div><div class="tile" style="border-radius:3px;background-image:url(assets/photos/picc_0.jpg)"></div><div class="tile" style="border-radius:3px;background-image:url(assets/photos/sunset_1.jpg)"></div></div>
+      </div>
+      <h3>While indexing is still running</h3>
+      <p>A slim blue banner reading <strong>Indexing photos…</strong> sits at the top of the gallery with a progress line. You can browse and search while it runs; new photos join the results as they finish. If a batch fails, the banner offers <strong>Retry</strong> and <strong>Skip</strong>.</p>
+      <div class="note"><span class="ms">keyboard_return</span><p>To leave KitaKo from Home, press <strong>Back</strong> twice. The first press shows <em>"Press back again to exit"</em>.</p></div>
+    </div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 05 search ═══════════════ -->
+<section class="page">
+  <div class="label">05 · Searching with words</div>
+  <h2>Describe it, find it</h2>
+  <div class="split r" style="margin-top:2mm">
+    <div>
+      <ol class="steps">
+        <li>On Home, tap the <strong>search bar</strong>. The Search screen slides up.</li>
+        <li>Type what you remember about the photo, in English, Tagalog or a mix.</li>
+        <li>Tap the blue <strong>send</strong> button <span class="ms" style="font-size:15px;color:var(--cobalt)">send</span> or press Enter on the keyboard.</li>
+      </ol>
+      <ul class="legend">
+        <li><i>1</i><span><b>Search field.</b> The <span class="ms" style="font-size:14px">close</span> clears what you typed. The <b>Photo</b> chip switches to a photo search (Section 06).</span></li>
+        <li><i>2</i><span><b>Suggested.</b> Tap any sparkle chip to run that query right away. They're a quick way to see what KitaKo can do, and they change each time.</span></li>
+        <li><i>3</i><span><b>Recent.</b> Your past searches. Tap one to run it again, tap <span class="ms" style="font-size:14px">close</span> to remove it, or <b>Clear all</b> to wipe the list.</span></li>
+        <li><i>4</i><span><b>Filters</b> <span class="ms" style="font-size:15px;color:var(--navy)">tune</span>. Limit results by date and relevance <em>before</em> you search (same options as in Section 07).</span></li>
+      </ul>
+      <h3>Tips for better results</h3>
+      <ul>
+        <li><strong>Describe what's visible:</strong> people, places, objects, colours, time of day. <span class="q">batang naglalaro sa playground</span> works better than <span class="q">last summer</span>.</li>
+        <li><strong>Short phrases are fine.</strong> Two to six words is usually enough: <span class="q">coffee sa cafe</span>, <span class="q">fireworks sa gabi</span>.</li>
+        <li><strong>Write naturally.</strong> Texting shortcuts are cleaned up automatically. <span class="q">kumain kmi s labas</span> is read as <em>kumain kami sa labas</em>. While a search runs, KitaKo shows the cleaned-up version as <em>Normalized: "…"</em>.</li>
+        <li><strong>KitaKo searches what's <em>in</em> the photo,</strong> not names, captions, or where it was taken. It can't tell who someone is or the exact date.</li>
+      </ul>
+    </div>
+    <figure>
+      <div class="phone-wrap" data-side="l"><div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div class="ab"><span class="ms">arrow_back</span><div class="t">Search</div><span class="ms" data-c="s-tune" style="color:var(--cobalt)">tune</span><span class="ms">settings</span></div>
+        <div class="sl">Suggested</div>
+        <div class="sugg">
+          <span data-c="s-chip"><span class="ms">auto_awesome</span>pamilya sa hapag</span>
+          <span><span class="ms">auto_awesome</span>jeepney sa kalsada</span>
+          <span><span class="ms">auto_awesome</span>street food sa palengke</span>
+          <span><span class="ms">auto_awesome</span>group photo ng barkada</span>
+          <span><span class="ms">auto_awesome</span>simbahan sa umaga</span>
+          <span><span class="ms">auto_awesome</span>coffee sa cafe</span>
+        </div>
+        <div class="sl">Recent <em>Clear all</em></div>
+        <div class="list">
+          <div class="row" data-c="s-recent"><div class="ib"><span class="ms">history</span></div><div class="tx">sunset sa beach</div><span class="ms">north_east</span><span class="ms" style="font-size:16px">close</span></div>
+          <div class="row"><div class="ib"><span class="ms">history</span></div><div class="tx">aso ko sa bahay</div><span class="ms">north_east</span><span class="ms" style="font-size:16px">close</span></div>
+          <div class="row"><div class="ib"><span class="ms">history</span></div><div class="tx">birthday party ng bata</div><span class="ms">north_east</span><span class="ms" style="font-size:16px">close</span></div>
+        </div>
+        <div class="sbar"><div class="field" data-c="s-field"><span class="ms">search</span><span class="v">kumakain sa beach</span><span class="ms" style="color:var(--faint);font-size:16px">close</span><div class="chip" style="height:28px;padding:0 10px"><span class="ms" style="color:var(--cobalt-deep);font-size:14px">image</span>Photo</div></div><div class="send"><span class="ms">send</span></div></div>
+      </div></div><i class="co" data-n="1" data-t="s-field">1</i><i class="co" data-n="2" data-t="s-chip">2</i><i class="co" data-n="3" data-t="s-recent">3</i><i class="co" data-n="4" data-t="s-tune" data-s="r">4</i></div>
+      <figcaption><b>Figure 4.</b> Search, with suggestions and recent queries</figcaption>
+    </figure>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 06 image search ═══════════════ -->
+<section class="page">
+  <div class="label">06 · Searching with a photo</div>
+  <h2>Show it instead of saying it</h2>
+  <p class="lede">When a photo is easier to show than to describe, use it as the search. KitaKo finds the pictures in your gallery that look most similar: same place, same kind of scene, the same pet.</p>
+  <div class="split" style="margin-top:4mm">
+    <figure>
+      <div class="phone-wrap" data-side="r"><div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div class="ab"><span class="ms">arrow_back</span><div class="t">Search</div><span class="ms" style="color:var(--cobalt)">tune</span><span class="ms">settings</span></div>
+        <div class="sl">Suggested</div>
+        <div class="sugg"><span><span class="ms">auto_awesome</span>view sa bundok</span><span><span class="ms">auto_awesome</span>ulan sa labas</span><span><span class="ms">auto_awesome</span>baby na tulog</span></div>
+        <div class="dim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div style="font-size:18px;font-weight:600;margin:0 0 10px">Search by Image</div>
+          <div class="row" data-c="i-gal" style="padding:14px 0;border:0"><span class="ms" style="font-size:24px;color:var(--dim)">photo_library</span><div class="tx" style="margin-left:14px">Choose from Gallery</div></div>
+          <div class="row" data-c="i-cam" style="padding:14px 0;border:0"><span class="ms" style="font-size:24px;color:var(--dim)">photo_camera</span><div class="tx" style="margin-left:14px">Take a Photo<small>Saves to gallery and indexes for search</small></div></div>
+        </div>
+      </div></div><i class="co" data-n="1" data-t="i-gal">1</i><i class="co" data-n="2" data-t="i-cam">2</i></div>
+      <figcaption><b>Figure 5.</b> The Search by Image sheet</figcaption>
+    </figure>
+    <div>
+      <h3 style="margin-top:0">From the Search screen</h3>
+      <ol class="steps">
+        <li>Tap the <strong>Photo</strong> chip <span class="k"><span class="ms">image</span>Photo</span> in the search bar.</li>
+        <li>Choose where the picture comes from:</li>
+      </ol>
+      <ul class="legend">
+        <li><i>1</i><span><b>Choose from Gallery.</b> Pick any existing photo. Results open right away.</span></li>
+        <li><i>2</i><span><b>Take a Photo.</b> Opens the camera. KitaKo saves the new picture to your gallery, adds it to the index, then searches with it. You'll see <em>"Photo saved to gallery — indexing…"</em>. Needs the Camera permission.</span></li>
+      </ul>
+      <h3>Two faster shortcuts</h3>
+      <div class="card" style="margin-bottom:10px"><strong style="font-size:10pt"><span class="ms" style="color:var(--cobalt);font-size:18px">touch_app</span> Press and hold on Home</strong><p style="font-size:9.3pt;margin:4px 0 0">Long-press any photo in the gallery. KitaKo shows <em>"Finding similar images…"</em> and opens the matches.</p></div>
+      <div class="card"><strong style="font-size:10pt"><span class="ms" style="color:var(--cobalt);font-size:18px">image_search</span> Find Similar in a photo</strong><p style="font-size:9.3pt;margin:4px 0 0">While viewing a photo, tap the blue <strong>Find Similar</strong> button (Section 08).</p></div>
+      <div class="note" style="margin-top:12px"><span class="ms">lightbulb</span><p>Photo search compares how pictures <em>look</em>, not who is in them. A photo of your dog finds other dog photos, and may also find similar-looking dogs.</p></div>
+    </div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 07 results ═══════════════ -->
+<section class="page">
+  <div class="label">07 · Reading your results</div>
+  <h2>Best matches first</h2>
+  <div class="split r" style="margin-top:2mm">
+    <div>
+      <p>Results are ranked from closest to furthest match. KitaKo doesn't show raw scores. A rank badge and a simple strength meter tell you how confident it is.</p>
+      <ul class="legend">
+        <li><i>1</i><span><b>Query header.</b> Your search (or the photo you searched with) and how many matches were found.</span></li>
+        <li><i>2</i><span><b>Rank badge.</b> <span class="k" style="background:var(--cobalt);color:#fff;border:0"><span class="ms f" style="color:#fff">star</span>Best match</span> marks the top result; the rest are numbered <strong>#2</strong>, <strong>#3</strong>…</span></li>
+        <li><i>3</i><span><b>Match strength.</b> Three bars: <strong>three lit</strong> is a strong match, <strong>one lit</strong> a loose one.</span></li>
+        <li><i>4</i><span><b>Filter</b> <span class="ms" style="font-size:15px;color:var(--navy)">tune</span>. Narrow the results (below).</span></li>
+      </ul>
+      <p>Tap any result to open it full-size. Use <span class="ms" style="font-size:15px">arrow_back</span> to return to Search and refine your words.</p>
+      <h3>Filtering results</h3>
+      <div class="card" style="padding:12px 14px">
+        <p style="margin:0 0 6px"><strong>Date Range.</strong> Set <em>From</em> and/or <em>Until</em> to keep only photos taken in that window, e.g. just last December's Christmas photos.</p>
+        <p style="margin:0 0 6px"><strong>Relevance.</strong> Choose how strict KitaKo should be:</p>
+        <table style="margin:4px 0 6px">
+          <tr><th>Level</th><th>Shows</th></tr>
+          <tr><td>Off</td><td>Every result, regardless of score</td></tr>
+          <tr><td>Low</td><td>Results above a 20% match</td></tr>
+          <tr><td>Medium</td><td>Results above a 45% match</td></tr>
+          <tr><td>High</td><td>Only results above a 70% match</td></tr>
+        </table>
+        <p style="margin:0">Tap <strong>Apply Filters</strong>. Active filters appear as a strip above the results; tap <strong>Clear</strong> there, or <strong>Reset</strong> in the sheet, to remove them.</p>
+      </div>
+      <div class="note"><span class="ms">search_off</span><p><strong>No results?</strong> Try different words, loosen the Relevance level, or tap <strong>Clear Filters</strong>. <strong>New Search</strong> takes you back to the search box.</p></div>
+    </div>
+    <figure>
+      <div class="phone-wrap" data-side="l"><div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div class="ab"><span class="ms">arrow_back</span><div class="t">Results</div><span class="ms" data-c="r-tune">tune</span></div>
+        <div class="qh" data-c="r-qh"><div class="ib"><span class="ms">search</span></div><div><b>"sunset sa beach"</b><small>12 matches · ranked by similarity</small></div></div>
+        <div class="grid">
+          <div class="tile" style="background-image:url(assets/photos/sunset_0.jpg)"><span class="rb" data-c="r-best"><span class="ms f">star</span>Best match</span></div>
+          <div class="tile" style="background-image:url(assets/photos/beach_0.jpg)"><span class="rb">#2</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/sunset_1.jpg)"><span class="rb">#3</span><span class="meter" data-c="r-meter"><i class="on"></i><i class="on"></i><i class="on"></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/beach_1.jpg)"><span class="rb">#4</span><span class="meter"><i class="on"></i><i class="on"></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/mountains_1.jpg)"><span class="rb">#5</span><span class="meter"><i class="on"></i><i class="on"></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/chocolatehills_0.jpg)"><span class="rb">#6</span><span class="meter"><i class="on"></i><i class="on"></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/picc_1.jpg)"><span class="rb">#7</span><span class="meter"><i class="on"></i><i></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/banaue_1.jpg)"><span class="rb">#8</span><span class="meter"><i class="on"></i><i></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/chocolatehills_1.jpg)"><span class="rb">#9</span><span class="meter"><i class="on"></i><i></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/intramuros_1.jpg)"><span class="rb">#10</span><span class="meter"><i class="on"></i><i></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/church_1.jpg)"><span class="rb">#11</span><span class="meter"><i class="on"></i><i></i><i></i></span></div>
+          <div class="tile" style="background-image:url(assets/photos/picc_0.jpg)"><span class="rb">#12</span><span class="meter"><i class="on"></i><i></i><i></i></span></div>
+        </div>
+      </div></div><i class="co" data-n="1" data-t="r-qh">1</i><i class="co" data-n="2" data-t="r-best">2</i><i class="co" data-n="3" data-t="r-meter" data-s="r">3</i><i class="co" data-n="4" data-t="r-tune" data-s="r">4</i></div>
+      <figcaption><b>Figure 6.</b> Results, ranked with match-strength meters</figcaption>
+    </figure>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 08 details ═══════════════ -->
+<section class="page">
+  <div class="label">08 · Viewing a photo</div>
+  <h2>Photo details</h2>
+  <div class="split" style="margin-top:2mm">
+    <figure>
+      <div class="phone-wrap" data-side="r"><div class="phone"><div class="scr">
+        <div class="sb" style="background:#fff"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div class="ab" style="background:#fff;border-bottom:1px solid var(--border)"><span class="ms" style="color:var(--ink)">arrow_back</span><div style="flex:1;font-size:14px;font-weight:500"><span data-c="d-name">IMG_20261011_154210.jpg</span></div></div>
+        <div style="position:absolute;left:0;right:0;top:96px;bottom:118px;display:grid;place-items:center">
+          <img src="assets/photos/family_1.jpg" style="max-width:100%;max-height:100%;display:block" alt="">
+          <div style="position:absolute;left:12px;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;display:grid;place-items:center"><span class="ms">chevron_left</span></div>
+          <div data-c="d-next" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;display:grid;place-items:center"><span class="ms">chevron_right</span></div>
+          <div data-c="d-count" style="position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:rgba(0,0,0,.55);color:#fff;font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px">3  ·  12</div>
+        </div>
+        <div style="position:absolute;left:0;right:0;bottom:0;height:118px;background:#fff;border-top:1px solid var(--border);padding:14px 16px 18px;display:flex;gap:12px">
+          <div data-c="d-info" style="flex:1;min-width:0">
+            <div style="font-size:15px;font-weight:600">IMG_20261011_154210.jpg</div>
+            <div style="font-size:12px;color:var(--more);margin-top:6px;display:flex;align-items:center;gap:6px"><span class="ms" style="font-size:13px">schedule</span>Oct 11, 2026  3:42 PM</div>
+            <div style="font-size:11px;color:var(--faint);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">/storage/emulated/0/DCIM/Camera  ·  2.4 MB</div>
+          </div>
+          <div data-c="d-find" style="height:38px;padding:0 14px;border-radius:999px;background:var(--cobalt);color:#fff;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;flex:none"><span class="ms" style="font-size:17px">image_search</span>Find Similar</div>
+        </div>
+      </div></div><i class="co" data-n="1" data-t="d-name">1</i><i class="co" data-n="2" data-t="d-next">2</i><i class="co" data-n="3" data-t="d-count">3</i><i class="co" data-n="4" data-t="d-info" data-s="l">4</i><i class="co" data-n="5" data-t="d-find">5</i></div>
+      <figcaption><b>Figure 7.</b> Details view of a single photo</figcaption>
+    </figure>
+    <div>
+      <p>Tap a photo anywhere in KitaKo (Home or Results) to open it here.</p>
+      <ul class="legend">
+        <li><i>1</i><span><b>Back</b> and the photo's file name.</span></li>
+        <li><i>2</i><span><b>Previous / Next.</b> Step through the photos in the list you came from, whether that's your gallery or your search results.</span></li>
+        <li><i>3</i><span><b>Position counter.</b> "3 · 12" means photo 3 of 12.</span></li>
+        <li><i>4</i><span><b>Photo info.</b> File name, date and time taken, folder, and file size.</span></li>
+        <li><i>5</i><span><b>Find Similar.</b> Searches your gallery for photos that look like this one. The button reads <em>Searching…</em> while it works.</span></li>
+      </ul>
+      <div class="note"><span class="ms">shield</span><p>KitaKo is read-only. It never edits, moves, or deletes your photos. To delete or share a picture, use your phone's regular Gallery or Photos app.</p></div>
+      <h3>A quick search workflow</h3>
+      <ol class="steps">
+        <li>Search <span class="q">birthday party ng bata</span>.</li>
+        <li>Open the best match and step through the results with <span class="ms" style="font-size:15px">chevron_right</span>.</li>
+        <li>Found the right party? Tap <strong>Find Similar</strong> to pull up every other photo from that day.</li>
+      </ol>
+    </div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 09 settings ═══════════════ -->
+<section class="page">
+  <div class="label">09 · Settings</div>
+  <h2>Make KitaKo yours</h2>
+  <div class="split r" style="margin-top:2mm">
+    <div>
+      <p>Open Settings with the <span class="ms" style="font-size:15px;color:var(--navy)">settings</span> gear on Home or Search.</p>
+      <h3 style="margin-top:10px">Appearance</h3>
+      <ul class="legend">
+        <li><i>1</i><span><b>Dark mode.</b> Switch between the light and dark themes. Light is the default.</span></li>
+        <li><i>2</i><span><b>Gallery columns.</b> Tap 2–6 to set how many photos fit across Home. Same as pinching the grid.</span></li>
+      </ul>
+      <h3>Search</h3>
+      <ul class="legend">
+        <li><i>3</i><span><b>Search mode.</b> <strong>Performance</strong> returns results fastest and suits most people. <strong>Accuracy</strong> checks more carefully and can find matches that Performance misses, at the cost of a little speed.</span></li>
+        <li><i>4</i><span><b>Always show top results.</b> Off by default, so KitaKo shows only relevant matches. Tap <strong>Enable</strong>, confirm, and pick <strong>10 / 20 / 50 / 100</strong> to always get that many results, even weak ones. Useful when a search keeps coming back empty. Tap <strong>Disable</strong> to turn it off.</span></li>
+        <li><i>5</i><span><b>Clear search history.</b> Removes all recent queries from the device.</span></li>
+      </ul>
+    </div>
+    <figure>
+      <div class="phone-wrap" data-side="l"><div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span><span class="ms">signal_cellular_alt</span><span class="ms">wifi</span><span class="ms">battery_full</span></span></div>
+        <div class="ab"><span class="ms">arrow_back</span><div class="t">Settings</div></div>
+        <div class="sl" style="font-size:11px;letter-spacing:1px;margin:16px 0 8px">Appearance</div>
+        <div class="list">
+          <div class="row" data-c="g-dark"><div class="ib"><span class="ms">dark_mode</span></div><div class="tx">Dark mode<small>Match your system theme by default</small></div><div class="tog"></div></div>
+          <div class="row" data-c="g-cols"><div class="ib"><span class="ms">grid_view</span></div><div class="tx">Gallery columns<small>3 columns · pinch to adjust</small></div><div class="cols"><span>2</span><span class="on">3</span><span>4</span><span>5</span><span>6</span></div></div>
+        </div>
+        <div class="sl" style="font-size:11px;letter-spacing:1px;margin:16px 0 8px">Search</div>
+        <div class="list">
+          <div class="row" data-c="g-mode" style="display:block"><div style="display:flex;gap:12px;align-items:center"><div class="ib"><span class="ms">gps_fixed</span></div><div class="tx">Search mode<small>Trade off recall against latency</small></div></div>
+            <div class="choice"><div class="on"><span class="ms">speed</span>Performance<small>IVF-PQ · faster</small></div><div><span class="ms">gps_fixed</span>Accuracy<small>HNSW · higher recall</small></div></div></div>
+          <div class="row" data-c="g-top"><div class="ib"><span class="ms">filter_list</span></div><div class="tx">Always show top results<small>Off · only relevant results shown</small></div><span style="font-size:13px;font-weight:600;color:var(--cobalt)">Enable</span></div>
+          <div class="row" data-c="g-hist"><div class="ib"><span class="ms">history</span></div><div class="tx">Clear search history<small>Remove all recent queries from this device</small></div><span class="ms">chevron_right</span></div>
+        </div>
+        <div class="sl" style="font-size:11px;letter-spacing:1px;margin:16px 0 8px">Models</div>
+        <div class="list">
+          <div class="row" data-c="g-models"><div class="ib"><span class="ms">image</span></div><div class="tx">Image encoder<small>kitako_image_encoder_fp32 · 190 MB</small></div><span class="ready">● Ready</span></div>
+          <div class="row"><div class="ib"><span class="ms">search</span></div><div class="tx">Text encoder<small>kitako_text_encoder_int8 · 23 MB</small></div><span class="ready">● Ready</span></div>
+        </div>
+      </div></div><i class="co" data-n="1" data-t="g-dark">1</i><i class="co" data-n="2" data-t="g-cols">2</i><i class="co" data-n="3" data-t="g-mode">3</i><i class="co" data-n="4" data-t="g-top">4</i><i class="co" data-n="5" data-t="g-hist">5</i><i class="co" data-n="6" data-t="g-models">6</i></div>
+      <figcaption><b>Figure 8.</b> Settings (top half)</figcaption>
+    </figure>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<section class="page">
+  <div class="label">09 · Settings</div>
+  <h2>Models, storage and about</h2>
+  <ul class="legend" style="max-width:none">
+    <li><i>6</i><span><b>Models.</b> Status of the two AI models KitaKo uses: the <em>image encoder</em>, which understands photos, and the <em>text encoder</em>, which understands your words. Both should read <span class="ready" style="font-size:8pt;padding:2px 7px">● Ready</span>. <em>Missing</em> means the app didn't install completely. Reinstall it.</span></li>
+  </ul>
+  <h3>Indexing &amp; Storage</h3>
+  <table>
+    <tr><th style="width:32%">Option</th><th>What it does</th></tr>
+    <tr><td>Re-index gallery</td><td>Shows how many photos are currently indexed (e.g. <em>840 photos indexed</em>). New photos are added automatically each time you open KitaKo.</td></tr>
+    <tr><td>Embedding cache <span class="danger" style="display:inline-flex;margin-left:6px"><span class="ms">delete</span>Clear</span></td><td>Deletes KitaKo's saved photo index to free up space. After you confirm <strong>Clear embedding cache?</strong>, your photos are re-indexed the next time it's needed, which takes as long as the first setup. Your actual photos are never touched.</td></tr>
+  </table>
+  <h3>About</h3>
+  <p><strong>Version</strong> shows the installed release (<em>1.0.0 · release</em>). Include it when reporting a problem.</p>
+
+  <div class="card" style="margin-top:8mm;display:flex;gap:14px;align-items:flex-start;border-color:#F1B4CE;background:#FFF5F9">
+    <div style="font-size:26px;line-height:1">💅</div>
+    <div><strong style="font-size:10.5pt">A hidden extra</strong><p style="font-size:9.3pt;margin:4px 0 0">KitaKo has a secret theme. Tap the <em>Dark mode</em> switch quickly, over and over, and you'll find it. To go back to normal, set Gallery columns to <strong>6</strong> and tap Dark mode once more.</p></div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 10 troubleshooting ═══════════════ -->
+<section class="page">
+  <div class="label">10 · Troubleshooting &amp; FAQ</div>
+  <h2>When something's off</h2>
+  <table class="tight">
+    <tr><th style="width:34%">Problem</th><th>Try this</th></tr>
+    <tr><td>"No images found" on startup</td><td>KitaKo can't see your photos. Open <em>Android Settings → Apps → KitaKo → Permissions</em> and allow <strong>Photos and videos</strong>, then reopen the app. Or tap <strong>Browse</strong> to choose the folder where your pictures are.</td></tr>
+    <tr><td>A photo I just took doesn't show up in search</td><td>New photos are indexed when KitaKo starts. Close and reopen the app, and wait for <em>Indexing photos…</em> to finish. Photos taken with <strong>Take a Photo</strong> inside KitaKo are indexed straight away.</td></tr>
+    <tr><td>Search returns nothing</td><td>Use different or simpler words that describe what's <em>visible</em>. Set Relevance to <strong>Off</strong> or <strong>Low</strong>, clear any date filters, or turn on <em>Always show top results</em>.</td></tr>
+    <tr><td>Results aren't quite right</td><td>Add detail: <span class="q">aso sa beach</span> rather than <span class="q">aso</span>. Switch <em>Search mode</em> to <strong>Accuracy</strong>. Or open a good result and use <strong>Find Similar</strong>.</td></tr>
+    <tr><td>Amber "Retry / Skip" message</td><td>Some photos couldn't be processed, often because the files are damaged or in an unusual format. <strong>Retry</strong> once; if it fails again, <strong>Skip</strong>. Everything else keeps working.</td></tr>
+    <tr><td>First setup is slow</td><td>That's normal for a big gallery. Every photo is analysed on your phone. Keep the app open and the phone charging. After that, only new photos are processed.</td></tr>
+    <tr><td>App closes during indexing</td><td>Your phone may be low on memory. Close other apps and reopen KitaKo; it continues from where it stopped (<em>Picking up where we left off…</em>).</td></tr>
+    <tr><td>"Take a Photo" doesn't work</td><td>Allow the <strong>Camera</strong> permission in Android Settings. If the message says the gallery save failed, the search still runs, but the picture may not be kept.</td></tr>
+    <tr><td>Models show "Missing"</td><td>The installation is incomplete. Uninstall KitaKo, then download and install the APK again.</td></tr>
+  </table>
+  <h3 style="margin-top:12px">Frequently asked</h3>
+  <div class="two" style="gap:8px">
+    <div class="card" style="padding:10px 14px"><strong style="font-size:10pt">Does KitaKo need the internet?</strong><p style="font-size:9.3pt;margin:4px 0 0">No. Once installed, everything runs on your phone, even in airplane mode.</p></div>
+    <div class="card" style="padding:10px 14px"><strong style="font-size:10pt">Can it recognise people by name?</strong><p style="font-size:9.3pt;margin:4px 0 0">Not in version 1.0.0. KitaKo searches by what a photo shows, such as <span class="q">group photo ng barkada</span>, not by who is in it.</p></div>
+    <div class="card" style="padding:10px 14px"><strong style="font-size:10pt">Does it search videos?</strong><p style="font-size:9.3pt;margin:4px 0 0">No. Only still photos are indexed.</p></div>
+    <div class="card" style="padding:10px 14px"><strong style="font-size:10pt">Will uninstalling delete my photos?</strong><p style="font-size:9.3pt;margin:4px 0 0">No. Uninstalling removes only KitaKo and its private index. Your photos stay in your gallery.</p></div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ 11 privacy + quick ref ═══════════════ -->
+<section class="page">
+  <div class="label">11 · Privacy at a glance</div>
+  <h2>What stays on your phone</h2>
+  <div class="two" style="margin-bottom:6mm">
+    <div class="card">
+      <div class="sl" style="padding:0;margin:0 0 8px;font-size:8pt">KitaKo stores, on-device only</div>
+      <ul style="font-size:9.3pt;margin-bottom:0"><li>Numeric "fingerprints" (embeddings) of your photos</li><li>The search index built from them</li><li>File names, dates and sizes used for results</li><li>Your recent searches and settings</li></ul>
+    </div>
+    <div class="card">
+      <div class="sl" style="padding:0;margin:0 0 8px;font-size:8pt">KitaKo never</div>
+      <ul style="font-size:9.3pt;margin-bottom:0"><li>Uploads or transmits photos, thumbnails or searches</li><li>Copies, moves, edits or deletes your photos</li><li>Asks for location, microphone or contacts</li><li>Requires an account or sign-in</li></ul>
+    </div>
+  </div>
+  <p>To remove everything KitaKo has stored, clear the app's data in Android Settings, or uninstall it. The full terms are in the in-app <strong>End User License Agreement</strong>.</p>
+
+  <div class="label" style="margin-top:8mm">Quick reference</div>
+  <table>
+    <tr><th style="width:42%">To…</th><th>Do this</th></tr>
+    <tr><td>Search by description</td><td>Home → tap search bar → type → <span class="ms" style="font-size:14px;color:var(--cobalt)">send</span></td></tr>
+    <tr><td>Search with an existing photo</td><td>Search → <span class="k"><span class="ms">image</span>Photo</span> → Choose from Gallery</td></tr>
+    <tr><td>Search with a new photo</td><td>Search → <span class="k"><span class="ms">image</span>Photo</span> → Take a Photo</td></tr>
+    <tr><td>Find look-alikes of a gallery photo</td><td>Press and hold the photo on Home</td></tr>
+    <tr><td>Find look-alikes of the photo you're viewing</td><td>Details → <strong>Find Similar</strong></td></tr>
+    <tr><td>Rerun a past search</td><td>Search → <em>Recent</em> → tap the query</td></tr>
+    <tr><td>Narrow results by date or strictness</td><td>Results → <span class="ms" style="font-size:14px">tune</span> → set → Apply Filters</td></tr>
+    <tr><td>Bigger or smaller thumbnails</td><td>Pinch the Home grid, or Settings → Gallery columns</td></tr>
+    <tr><td>Switch to dark theme</td><td>Settings → Appearance → Dark mode</td></tr>
+    <tr><td>Exit the app</td><td>Press Back twice on Home</td></tr>
+  </table>
+
+  <div class="label" style="margin-top:7mm">Taglish words KitaKo understands well</div>
+  <p style="font-size:9.5pt">Mix these with English freely: <span class="q">sa</span> (at/in) · <span class="q">ng</span> (of) · <span class="q">may</span> (with) · <span class="q">mga</span> (plural) · <span class="q">aso</span> dog · <span class="q">pusa</span> cat · <span class="q">bahay</span> house · <span class="q">kalsada</span> street · <span class="q">palengke</span> market · <span class="q">simbahan</span> church · <span class="q">bundok</span> mountain · <span class="q">dagat</span> sea · <span class="q">gabi</span> night · <span class="q">umaga</span> morning · <span class="q">kumakain</span> eating · <span class="q">naglalaro</span> playing · <span class="q">barkada</span> friends.</p>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<!-- ═══════════════ credits ═══════════════ -->
+<section class="page">
+  <div class="label">Credits</div>
+  <h2>Sample photo credits</h2>
+  <p>The photos used in the screen illustrations come from Wikimedia Commons and are used under the licences listed below. They are examples only and do not ship with the app.</p>
+  <div class="credits"><!--CREDITS--></div>
+  <div class="card" style="margin-top:8mm;display:flex;gap:16px;align-items:center">
+    <img src="assets/kitako-project-qr.png" alt="Project repository QR" style="width:30mm;border-radius:6px">
+    <div><strong>KitaKo project repository</strong><p style="font-size:9.3pt;margin:4px 0 0">Source code, releases and technical documentation:<br><span style="color:var(--cobalt-deep);font-weight:500">github.com/Emyol/KitaKo_Codebase</span></p></div>
+  </div>
+  <div class="runner"><span><b>KitaKo</b> · User Manual</span><span></span></div>
+</section>
+
+<script>
+/* Callouts: number sits outside the phone; a leader line runs to a dot on the target. */
+(function(){
+  var NS='http://www.w3.org/2000/svg', GAP=24;
+  function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e}
+  function layout(){
+    document.querySelectorAll('.phone-wrap[data-side]').forEach(function(w){
+      var old=w.querySelector('.co-svg'); if(old) old.remove();
+      var W=w.getBoundingClientRect(), svg=el('svg',{'class':'co-svg',width:W.width,height:W.height});
+      var items=[].slice.call(w.querySelectorAll('.co')).map(function(c){
+        var r=w.querySelector('[data-c="'+c.dataset.t+'"]').getBoundingClientRect();
+        var side=c.dataset.s||w.dataset.side;
+        return {c:c,side:side,x:(side==='r'?r.right+4:r.left-4)-W.left,y:r.top+r.height/2-W.top};
+      });
+      ['l','r'].forEach(function(sd){
+        var g=items.filter(function(i){return i.side===sd}).sort(function(a,b){return a.y-b.y});
+        g.forEach(function(it,i){it.my=(i&&it.y<g[i-1].my+GAP)?g[i-1].my+GAP:it.y});
+      });
+      items.forEach(function(it){
+        var r=it.side==='r', mx=r?W.width+16:-16, xe=r?W.width-2:2;
+        var pts=[[it.x,it.y],[xe,it.y],[mx+(r?-10:10),it.my]].map(function(p){return p.join(',')}).join(' ');
+        svg.append(el('polyline',{points:pts,fill:'none',stroke:'#fff','stroke-width':4,'stroke-linejoin':'round','stroke-linecap':'round'}));
+        svg.append(el('polyline',{points:pts,fill:'none',stroke:'#2563EB','stroke-width':1.5,'stroke-linejoin':'round'}));
+        svg.append(el('circle',{cx:it.x,cy:it.y,r:3.5,fill:'#2563EB',stroke:'#fff','stroke-width':1.5}));
+        it.c.style.left=(mx-10)+'px'; it.c.style.top=(it.my-10)+'px';
+      });
+      w.append(svg);
+    });
+  }
+  (document.fonts?document.fonts.ready:Promise.resolve()).then(function(){requestAnimationFrame(layout)});
+})();
+</script>
+</body>
+</html>
